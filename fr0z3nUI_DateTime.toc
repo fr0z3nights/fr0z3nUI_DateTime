@@ -1,0 +1,13 @@
+## Interface: 110207
+## Title: |cff00ccfffr0z3nUI|r DateTime
+## Notes: Simple movable date/time Type /fdt.
+## Author: fr0z3n
+## Version: 1.0.0
+## SavedVariables: fr0z3nUI_DateTimeDB
+## SavedVariablesPerCharacter: fr0z3nUI_DateTimeCharDB
+
+# If the addon doesn’t load, update Interface to match your client:
+# /run print("TOC interface =", select(4, GetBuildInfo()))
+# 12.0.0 reminder: bump to 120000
+
+fr0z3nUI_DateTime.lua
