@@ -494,6 +494,45 @@ local function UpdateTimeGroupSize()
   clockFrame.timeGroup:SetHeight(math.max(1, tonumber(DB.timeSize) or 32))
 end
 
+local function AutoSizeClockFrameWidth()
+  if not clockFrame then return end
+  if not (clockFrame.SetWidth and clockFrame.GetWidth) then return end
+
+  local function isShown(f)
+    return f and f.IsShown and f:IsShown()
+  end
+
+  local function stringWidth(fs)
+    if not fs or not fs.GetStringWidth or not isShown(fs) then return 0 end
+    local w = tonumber(fs:GetStringWidth()) or 0
+    if w < 0 then w = 0 end
+    return w
+  end
+
+  local dayW = stringWidth(clockFrame.day)
+  local dateW = stringWidth(clockFrame.date)
+  local timeW = 0
+  if clockFrame.timeGroup and clockFrame.timeGroup.GetWidth and isShown(clockFrame.timeGroup) then
+    timeW = tonumber(clockFrame.timeGroup:GetWidth()) or 0
+  end
+
+  local maxW = math.max(dayW, dateW, timeW)
+
+  -- Account for offsets that may push the time group left/right a bit.
+  local timeX = ClampNum(tonumber(DB and DB.timeXOffset), -80, 80)
+  local extra = math.abs(tonumber(timeX) or 0)
+
+  -- Padding keeps the hitbox comfortable but tight.
+  local padL, padR = 6, 6
+  local targetW = math.floor((maxW + padL + padR + extra) + 0.5)
+  targetW = ClampNum(targetW, 24, 520)
+
+  -- Keep width at least wide enough for alignment math.
+  clockFrame:SetWidth(targetW)
+  if clockFrame.day and clockFrame.day.SetWidth then clockFrame.day:SetWidth(targetW) end
+  if clockFrame.date and clockFrame.date.SetWidth then clockFrame.date:SetWidth(targetW) end
+end
+
 local function ColorCodeRGB(r, g, b)
   r = ClampNum(tonumber(r), 0, 1)
   g = ClampNum(tonumber(g), 0, 1)
@@ -848,6 +887,7 @@ local function UpdateClockText()
     end
   end
   UpdateTimeGroupSize()
+  AutoSizeClockFrameWidth()
 end
 
 local function StopTicker()
