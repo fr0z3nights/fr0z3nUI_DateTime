@@ -107,6 +107,75 @@ local ALARM_SOUND_PRESETS = {
 local activeAlarmState = nil
 local lastAlarmTickSecond = nil
 
+local function GetLibSharedMedia()
+  local ls = _G and rawget(_G, "LibStub")
+  if type(ls) ~= "function" then return nil end
+  local ok, lib = pcall(ls, "LibSharedMedia-3.0", true)
+  if ok and type(lib) == "table" then
+    return lib
+  end
+  return nil
+end
+
+local function GetLSMFontNames()
+  local lsm = GetLibSharedMedia()
+  if not lsm then return nil end
+
+  local names = {}
+  if type(lsm.List) == "function" then
+    local ok, list = pcall(lsm.List, lsm, "font")
+    if ok and type(list) == "table" then
+      for _, n in ipairs(list) do
+        if type(n) == "string" and n ~= "" then
+          names[#names + 1] = n
+        end
+      end
+    end
+  end
+
+  if #names == 0 and type(lsm.HashTable) == "function" then
+    local ok, ht = pcall(lsm.HashTable, lsm, "font")
+    if ok and type(ht) == "table" then
+      for n in pairs(ht) do
+        if type(n) == "string" and n ~= "" then
+          names[#names + 1] = n
+        end
+      end
+    end
+  end
+
+  if #names == 0 then return nil end
+  table.sort(names, function(a, b)
+    return tostring(a):lower() < tostring(b):lower()
+  end)
+  return names
+end
+
+local function ResolveLSMFontPath(name)
+  if type(name) ~= "string" or name == "" then return nil end
+  local lsm = GetLibSharedMedia()
+  if not lsm then return nil end
+
+  local fetch = lsm.Fetch or lsm.fetch
+  if type(fetch) == "function" then
+    local ok, path = pcall(fetch, lsm, "font", name)
+    if ok and type(path) == "string" and path ~= "" then
+      return path
+    end
+  end
+
+  if type(lsm.HashTable) == "function" then
+    local ok, ht = pcall(lsm.HashTable, lsm, "font")
+    if ok and type(ht) == "table" then
+      local p = ht[name]
+      if type(p) == "string" and p ~= "" then
+        return p
+      end
+    end
+  end
+  return nil
+end
+
 local FONT_PRESETS = {
   { key = "default", name = "Default (UI)", path = nil },
   { key = "friz", name = "Friz Quadrata", path = "Fonts\\FRIZQT__.TTF" },
@@ -1013,6 +1082,8 @@ local function ApplyFonts()
     DB.fontPreset = "bazooka"
   end
 
+  local lsmName = presetKey:match("^lsm:(.+)$")
+
   local function ResolveFirstWorkingFont(candidates)
     if type(candidates) ~= "table" then return nil end
     if not clockFrame.CreateFontString then return nil end
@@ -1064,6 +1135,11 @@ local function ApplyFonts()
   elseif presetKey == "custom" then
     local p = tostring(DB.fontPath or "")
     if p ~= "" then
+      font = ResolveFirstWorkingFont({ p }) or p
+    end
+  elseif lsmName then
+    local p = ResolveLSMFontPath(lsmName)
+    if type(p) == "string" and p ~= "" then
       font = ResolveFirstWorkingFont({ p }) or p
     end
   else
@@ -1737,10 +1813,89 @@ local function EnsureOptionsFrame()
   fontLabel:SetPoint("TOPLEFT", 16, -434)
   fontLabel:SetText("Font")
 
+  local AceGUI
+  do
+    local ls = _G and rawget(_G, "LibStub")
+    if type(ls) == "function" then
+      AceGUI = ls("AceGUI-3.0", true)
+    end
+  end
+
   f.fontPreset = CreateFrame("Button", nil, f.panelGeneral, "UIPanelButtonTemplate")
   f.fontPreset:SetSize(160, 20)
   f.fontPreset:SetPoint("TOPLEFT", 16, -450)
   f.fontPreset:SetText("Choose preset")
+
+  local function GetFontPresetEntries()
+    local out = {}
+    for _, p in ipairs(FONT_PRESETS) do
+      out[#out + 1] = { key = p.key, name = p.name, lsm = false }
+    end
+    local lsmFonts = GetLSMFontNames()
+    if type(lsmFonts) == "table" then
+      for _, n in ipairs(lsmFonts) do
+        out[#out + 1] = { key = "lsm:" .. n, name = n, lsm = true }
+      end
+    end
+    return out
+  end
+
+  if AceGUI and type(AceGUI.Create) == "function" then
+    local ok, widget = pcall(AceGUI.Create, AceGUI, "Dropdown")
+    ---@type any
+    local w = widget
+    if ok and w and w.frame then
+      f._aceFontPreset = w
+      w.frame:SetParent(f.panelGeneral)
+      w.frame:ClearAllPoints()
+      w.frame:SetPoint("TOPLEFT", 16, -450)
+      if w.frame.SetFrameLevel and f.fontPreset.GetFrameLevel then
+        w.frame:SetFrameLevel((f.fontPreset:GetFrameLevel() or 1) + 1)
+      end
+
+      if w.SetLabel then w:SetLabel("") end
+      if w.label and w.label.Hide then w.label:Hide() end
+
+      if w.dropdown and w.dropdown.ClearAllPoints and w.dropdown.SetPoint then
+        w.dropdown:ClearAllPoints()
+        w.dropdown:SetPoint("TOPLEFT", w.frame, "TOPLEFT", 0, 0)
+        w.dropdown:SetPoint("TOPRIGHT", w.frame, "TOPRIGHT", 0, 0)
+      end
+      if w.dropdown and w.dropdown.SetHeight then w.dropdown:SetHeight(20) end
+      if w.frame.SetHeight then w.frame:SetHeight(20) end
+      if w.SetWidth then w:SetWidth(160) end
+
+      do
+        local list = {}
+        for _, e in ipairs(GetFontPresetEntries()) do
+          list[e.key] = e.lsm and ("LSM: " .. e.name) or e.name
+        end
+        if w.SetList then w:SetList(list) end
+      end
+
+      if w.SetValue then
+        w:SetValue(tostring(DB.fontPreset or "default"))
+      end
+
+      if w.SetCallback then
+        w:SetCallback("OnValueChanged", function(_, _, key)
+          key = tostring(key or "default")
+          DB.fontPreset = key
+          if key ~= "custom" then
+            DB.fontPath = ""
+            if f.fontPath then f.fontPath:SetText("") end
+          end
+          if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
+          ApplyFonts()
+          ApplyState()
+          if f.Refresh then f:Refresh() end
+        end)
+      end
+
+      if f.fontPreset.Hide then f.fontPreset:Hide() end
+      if f.fontPreset.Disable then f.fontPreset:Disable() end
+    end
+  end
 
   f.fontPath = CreateFrame("EditBox", nil, f.panelGeneral, "InputBoxTemplate")
   f.fontPath:SetSize(240, 20)
@@ -1795,43 +1950,79 @@ local function EnsureOptionsFrame()
     end
   end
 
-  do
-    local menu
-    f.fontPreset:SetScript("OnClick", function(self)
-      if not (UIDropDownMenu_CreateInfo and ToggleDropDownMenu) then
-        Print("Dropdown menu unavailable.")
-        return
-      end
-      if not menu then
-        menu = CreateFrame("Frame", "fr0z3nUI_DateTimeFontMenu", f, "UIDropDownMenuTemplate")
-      end
-      UIDropDownMenu_Initialize(menu, function(_, level)
-        if level == 1 then
-          local info = UIDropDownMenu_CreateInfo()
-          for _, p in ipairs(FONT_PRESETS) do
-            info.text = p.name
-            info.checked = (tostring(DB.fontPreset or "default") == p.key)
-            info.hasArrow = nil
-            info.value = nil
-            info.func = function()
-              DB.fontPreset = p.key
-              if p.key ~= "custom" then
-                DB.fontPath = ""
-                if f.fontPath then f.fontPath:SetText("") end
-              end
-              if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
-              ApplyFonts()
-              ApplyState()
-              if f.Refresh then f:Refresh() end
-              if CloseDropDownMenus then CloseDropDownMenus() end
-            end
-            UIDropDownMenu_AddButton(info, level)
+  if not f._aceFontPreset then
+    do
+      local menu
+      f.fontPreset:SetScript("OnClick", function(self)
+        local function ApplyFontPreset(presetKey)
+          presetKey = tostring(presetKey or "default")
+          DB.fontPreset = presetKey
+          if presetKey ~= "custom" then
+            DB.fontPath = ""
+            if f.fontPath then f.fontPath:SetText("") end
           end
+          if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
+          ApplyFonts()
+          ApplyState()
+          if f.Refresh then f:Refresh() end
+        end
+
+        do
+          local mu = _G and rawget(_G, "MenuUtil")
+          if type(mu) == "table" and type(mu.CreateContextMenu) == "function" then
+            mu.CreateContextMenu(self, function(_, root)
+              if root and root.CreateTitle then
+                root:CreateTitle("Font preset")
+              end
+
+              local entries = GetFontPresetEntries()
+              for _, e in ipairs(entries) do
+                local function IsSelected()
+                  return tostring(DB.fontPreset or "default") == e.key
+                end
+                local function SetSelected()
+                  ApplyFontPreset(e.key)
+                end
+                local label = e.lsm and ("LSM: " .. e.name) or e.name
+
+                if root and root.CreateRadio then
+                  root:CreateRadio(label, IsSelected, SetSelected)
+                elseif root and root.CreateButton then
+                  root:CreateButton(label, SetSelected)
+                end
+              end
+            end)
+            return
+          end
+        end
+
+        if not (UIDropDownMenu_CreateInfo and ToggleDropDownMenu) then
+          Print("Dropdown menu unavailable.")
           return
         end
+        if not menu then
+          menu = CreateFrame("Frame", "fr0z3nUI_DateTimeFontMenu", f, "UIDropDownMenuTemplate")
+        end
+        UIDropDownMenu_Initialize(menu, function(_, level)
+          if level == 1 then
+            local info = UIDropDownMenu_CreateInfo()
+            for _, e in ipairs(GetFontPresetEntries()) do
+              info.text = e.lsm and ("LSM: " .. e.name) or e.name
+              info.checked = (tostring(DB.fontPreset or "default") == e.key)
+              info.hasArrow = nil
+              info.value = nil
+              info.func = function()
+                ApplyFontPreset(e.key)
+                if CloseDropDownMenus then CloseDropDownMenus() end
+              end
+              UIDropDownMenu_AddButton(info, level)
+            end
+            return
+          end
+        end)
+        ToggleDropDownMenu(1, nil, menu, self, 0, 0)
       end)
-      ToggleDropDownMenu(1, nil, menu, self, 0, 0)
-    end)
+    end
   end
 
   f.timeSize = CreateSlider("Time size", 18, -518, 10, 72, 1, function(_, v)
@@ -2868,7 +3059,19 @@ local function EnsureOptionsFrame()
     do
       local key = tostring(DB.fontPreset or "default")
       if key == "lsm" then key = "bazooka" end
-      f.fontPreset:SetText("Preset: " .. key)
+      local disp = key
+      local lsmName = key:match("^lsm:(.+)$")
+      if lsmName then
+        disp = "LSM: " .. lsmName
+      end
+      ---@type any
+      local w = f._aceFontPreset
+      if w and w.SetValue then
+        w:SetValue(key)
+      end
+      if f.fontPreset and f.fontPreset.SetText then
+        f.fontPreset:SetText("Preset: " .. disp)
+      end
     end
     if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
     if tostring(DB.fontPreset or "") == "custom" then
