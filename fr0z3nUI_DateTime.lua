@@ -1488,7 +1488,7 @@ local function EnsureOptionsFrame()
 
   f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   f.title:SetPoint("TOPLEFT", 12, -10)
-  f.title:SetText("fr0z3nUI DateTime")
+  f.title:SetText("|cff00ccff[FDT]|r DateTime")
 
   local function SelectTab(which)
     which = tostring(which or "general"):lower()
@@ -1513,19 +1513,19 @@ local function EnsureOptionsFrame()
   end
 
   f.tabGeneral = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.tabGeneral:SetSize(70, 20)
-  f.tabGeneral:SetPoint("TOPRIGHT", -154, -6)
+  f.tabGeneral:SetSize(60, 20)
+  f.tabGeneral:SetPoint("TOPLEFT", f.title, "TOPRIGHT", 10, 2)
   f.tabGeneral:SetText("General")
   f.tabGeneral:SetScript("OnClick", function() SelectTab("general") end)
 
   f.tabStyle = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.tabStyle:SetSize(70, 20)
+  f.tabStyle:SetSize(60, 20)
   f.tabStyle:SetPoint("LEFT", f.tabGeneral, "RIGHT", 6, 0)
   f.tabStyle:SetText("Style")
   f.tabStyle:SetScript("OnClick", function() SelectTab("style") end)
 
   f.tabAlarms = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.tabAlarms:SetSize(70, 20)
+  f.tabAlarms:SetSize(60, 20)
   f.tabAlarms:SetPoint("LEFT", f.tabStyle, "RIGHT", 6, 0)
   f.tabAlarms:SetText("Alarms")
   f.tabAlarms:SetScript("OnClick", function() SelectTab("alarms") end)
