@@ -1,5 +1,19 @@
 local ADDON, ns = ...
 
+-- WoW globals (shadowed to locals so diagnostics stay clean)
+local UISpecialFrames = _G and rawget(_G, "UISpecialFrames")
+local SOUNDKIT = _G and rawget(_G, "SOUNDKIT")
+
+local UIDropDownMenu_Initialize = _G and rawget(_G, "UIDropDownMenu_Initialize")
+local UIDropDownMenu_CreateInfo = _G and rawget(_G, "UIDropDownMenu_CreateInfo")
+local UIDropDownMenu_AddButton = _G and rawget(_G, "UIDropDownMenu_AddButton")
+local UIDropDownMenu_SetWidth = _G and rawget(_G, "UIDropDownMenu_SetWidth")
+local UIDropDownMenu_SetText = _G and rawget(_G, "UIDropDownMenu_SetText")
+local ToggleDropDownMenu = _G and rawget(_G, "ToggleDropDownMenu")
+local CloseDropDownMenus = _G and rawget(_G, "CloseDropDownMenus")
+
+local ColorPickerFrame = _G and rawget(_G, "ColorPickerFrame")
+
 local PREFIX = "|cff00ccff[FDT]|r "
 local function Print(msg)
   if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
@@ -1719,7 +1733,7 @@ local function EnsureOptionsFrame()
           reset.func = function()
             DB.tooltipOrder = GetDefaultTooltipOrder()
             NormalizeTooltipOrder()
-            if CloseDropDownMenus then CloseDropDownMenus() end
+            do local cdm = _G and rawget(_G, "CloseDropDownMenus"); if cdm then cdm() end end
           end
           UIDropDownMenu_AddButton(reset, level)
           return
@@ -1738,7 +1752,7 @@ local function EnsureOptionsFrame()
           up.func = function()
             MoveTooltipSection(key, -1)
             if f.Refresh then f:Refresh() end
-            if CloseDropDownMenus then CloseDropDownMenus() end
+            do local cdm = _G and rawget(_G, "CloseDropDownMenus"); if cdm then cdm() end end
           end
           UIDropDownMenu_AddButton(up, level)
 
@@ -1749,7 +1763,7 @@ local function EnsureOptionsFrame()
           down.func = function()
             MoveTooltipSection(key, 1)
             if f.Refresh then f:Refresh() end
-            if CloseDropDownMenus then CloseDropDownMenus() end
+            do local cdm = _G and rawget(_G, "CloseDropDownMenus"); if cdm then cdm() end end
           end
           UIDropDownMenu_AddButton(down, level)
 
@@ -1760,7 +1774,7 @@ local function EnsureOptionsFrame()
           top.func = function()
             MoveTooltipSectionTo(key, 1)
             if f.Refresh then f:Refresh() end
-            if CloseDropDownMenus then CloseDropDownMenus() end
+            do local cdm = _G and rawget(_G, "CloseDropDownMenus"); if cdm then cdm() end end
           end
           UIDropDownMenu_AddButton(top, level)
 
@@ -1771,7 +1785,7 @@ local function EnsureOptionsFrame()
           bottom.func = function()
             MoveTooltipSectionTo(key, #order)
             if f.Refresh then f:Refresh() end
-            if CloseDropDownMenus then CloseDropDownMenus() end
+            do local cdm = _G and rawget(_G, "CloseDropDownMenus"); if cdm then cdm() end end
           end
           UIDropDownMenu_AddButton(bottom, level)
 
@@ -2013,7 +2027,7 @@ local function EnsureOptionsFrame()
               info.value = nil
               info.func = function()
                 ApplyFontPreset(e.key)
-                if CloseDropDownMenus then CloseDropDownMenus() end
+                do local cdm = _G and rawget(_G, "CloseDropDownMenus"); if cdm then cdm() end end
               end
               UIDropDownMenu_AddButton(info, level)
             end

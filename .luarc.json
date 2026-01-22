@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.1",
+  "workspace.checkThirdParty": false,
+  "type.weakUnionCheck": true,
+  "diagnostics.globals": [
+    "print",
+    "SlashCmdList",
+    "DEFAULT_CHAT_FRAME",
+
+    "UISpecialFrames",
+    "SOUNDKIT",
+
+    "CreateFrame",
+    "UIParent",
+    "BackdropTemplate",
+    "BasicFrameTemplateWithInset",
+
+    "GameTooltip",
+
+    "UIDropDownMenu_Initialize",
+    "UIDropDownMenu_CreateInfo",
+    "UIDropDownMenu_AddButton",
+    "UIDropDownMenu_SetWidth",
+    "UIDropDownMenu_SetText",
+    "ToggleDropDownMenu",
+
+    "ColorPickerFrame",
+
+    "C_DateAndTime",
+    "C_Timer",
+    "Enum"
+  ]
+}
