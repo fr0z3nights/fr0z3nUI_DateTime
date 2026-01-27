@@ -56,6 +56,7 @@ local DEFAULTS = {
   tooltipOrder = { "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" },
   fontPreset = "bazooka",
   fontPath = "",
+  lsmFontPaths = {}, -- maps LSM font name -> resolved file path (stabilizes against name remaps)
   optionsX = 0,
   optionsY = 0,
   dateLayout = "UK", -- UK: 18 JANUARY 2026 | US: JANUARY 18 2026
@@ -99,10 +100,98 @@ local DEFAULTS = {
   y = 0,
 }
 
+local RegisterBundledFontsWithLSM
+
+local function DeepCopy(v)
+  if type(v) ~= "table" then return v end
+  local out = {}
+  for k, vv in pairs(v) do
+    out[DeepCopy(k)] = DeepCopy(vv)
+  end
+  return out
+end
+
+local function GetLibStub()
+  return _G and rawget(_G, "LibStub")
+end
+
+local function LibStubGetLibrary(ls, major, silent)
+  if not ls or type(major) ~= "string" then return nil end
+
+  if type(ls) == "table" and type(ls.GetLibrary) == "function" then
+    local ok, lib = pcall(ls.GetLibrary, ls, major, silent)
+    if ok and lib ~= nil then return lib end
+  end
+
+  -- LibStub is also commonly callable via metatable __call.
+  local mt = (type(ls) == "table") and getmetatable(ls) or nil
+  if type(ls) == "function" or (mt and type(mt.__call) == "function") then
+    local ok, lib = pcall(ls, major, silent)
+    if ok and lib ~= nil then return lib end
+  end
+
+  return nil
+end
+
 fr0z3nUI_DateTimeDB = fr0z3nUI_DateTimeDB or nil
 fr0z3nUI_DateTimeCharDB = fr0z3nUI_DateTimeCharDB or nil
 local DB
 local CharDB
+
+local AceDBObj
+
+local function LooksLikeAceDBTable(t)
+  return type(t) == "table" and type(t.profileKeys) == "table" and type(t.profiles) == "table"
+end
+
+local function TryInitAceDB()
+  local ls = GetLibStub()
+  if not ls then
+    return false
+  end
+
+  local aceDB = LibStubGetLibrary(ls, "AceDB-3.0", true)
+  if type(aceDB) ~= "table" or type(aceDB.New) ~= "function" then
+    return false
+  end
+
+  local legacyDB = nil
+  local legacyChar = nil
+  if type(fr0z3nUI_DateTimeDB) == "table" and not LooksLikeAceDBTable(fr0z3nUI_DateTimeDB) then
+    legacyDB = DeepCopy(fr0z3nUI_DateTimeDB)
+  end
+  if type(fr0z3nUI_DateTimeCharDB) == "table" then
+    legacyChar = DeepCopy(fr0z3nUI_DateTimeCharDB)
+  end
+
+  -- Use the same SavedVariables name so existing installs don't create yet another SV file.
+  AceDBObj = aceDB:New("fr0z3nUI_DateTimeDB", { profile = DEFAULTS, char = { alarms = {} } }, true)
+  DB = AceDBObj.profile
+  CharDB = (AceDBObj and type(AceDBObj.char) == "table") and AceDBObj.char or {}
+  if AceDBObj and type(AceDBObj.char) ~= "table" then
+    AceDBObj.char = CharDB
+  end
+  if type(CharDB) ~= "table" then
+    CharDB = {}
+  end
+  if type(CharDB.alarms) ~= "table" then
+    CharDB.alarms = {}
+  end
+
+  -- One-time migration from legacy SavedVariables.
+  if legacyDB then
+    for k, v in pairs(legacyDB) do
+      if k ~= "alarms" then
+        DB[k] = DeepCopy(v)
+      end
+    end
+  end
+  if legacyChar and type(legacyChar.alarms) == "table" then
+    CharDB.alarms = DeepCopy(legacyChar.alarms)
+  end
+
+  return true
+end
 
 local clockFrame
 local ticker
@@ -122,16 +211,39 @@ local activeAlarmState = nil
 local lastAlarmTickSecond = nil
 
 local function GetLibSharedMedia()
-  local ls = _G and rawget(_G, "LibStub")
-  if type(ls) ~= "function" then return nil end
-  local ok, lib = pcall(ls, "LibSharedMedia-3.0", true)
-  if ok and type(lib) == "table" then
-    return lib
+  do
+    local la = _G and rawget(_G, "LoadAddOn")
+    if type(la) == "function" then
+      pcall(la, "LibSharedMedia-3.0")
+    end
   end
+  local ls = GetLibStub()
+  local lib = LibStubGetLibrary(ls, "LibSharedMedia-3.0", true)
+  if type(lib) == "table" then return lib end
   return nil
 end
 
+local function EnsureFontLibsLoaded()
+  -- If we already have LibStub (embedded or from another addon), we can try to fetch libs directly.
+  local ls = GetLibStub()
+  local lsm = LibStubGetLibrary(ls, "LibSharedMedia-3.0", true)
+  local aceGUI = LibStubGetLibrary(ls, "AceGUI-3.0", true)
+  if type(lsm) == "table" and type(aceGUI) == "table" and type(aceGUI.Create) == "function" then
+    return
+  end
+
+  local la = _G and rawget(_G, "LoadAddOn")
+  if type(la) == "function" then
+    -- Fallback: try to load standalone addons if present.
+    pcall(la, "Ace3")
+    pcall(la, "LibSharedMedia-3.0")
+  end
+end
+
 local function GetLSMFontNames()
+  if type(RegisterBundledFontsWithLSM) == "function" then
+    RegisterBundledFontsWithLSM()
+  end
   local lsm = GetLibSharedMedia()
   if not lsm then return nil end
 
@@ -190,6 +302,22 @@ local function ResolveLSMFontPath(name)
   return nil
 end
 
+RegisterBundledFontsWithLSM = function()
+  local lsm = GetLibSharedMedia()
+  if not (lsm and type(lsm.Register) == "function") then return end
+
+  -- If no media pack is providing Bazooka, register our bundled font under the same name.
+  -- This keeps existing selections like "lsm:Bazooka" working even when SharedMedia is disabled.
+  local bazookaName = "Bazooka"
+  local current = ResolveLSMFontPath(bazookaName)
+  if type(current) == "string" and current ~= "" then
+    return
+  end
+
+  local path = "Interface\\AddOns\\fr0z3nUI_DateTime\\media\\Bazooka.ttf"
+  pcall(lsm.Register, lsm, "font", bazookaName, path)
+end
+
 local FONT_PRESETS = {
   { key = "default", name = "Default (UI)", path = nil },
   { key = "friz", name = "Friz Quadrata", path = "Fonts\\FRIZQT__.TTF" },
@@ -229,6 +357,22 @@ local function EnsureDB()
   if type(DB.tooltipOrder) ~= "table" then
     DB.tooltipOrder = { "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" }
   end
+end
+
+local function EnsureCharDB()
+  if AceDBObj then
+    CharDB = (type(AceDBObj.char) == "table") and AceDBObj.char or {}
+    if type(AceDBObj.char) ~= "table" then
+      AceDBObj.char = CharDB
+    end
+    if type(CharDB.alarms) ~= "table" then
+      CharDB.alarms = {}
+    end
+    return
+  end
+  if type(fr0z3nUI_DateTimeCharDB) ~= "table" then fr0z3nUI_DateTimeCharDB = {} end
+  if type(fr0z3nUI_DateTimeCharDB.alarms) ~= "table" then fr0z3nUI_DateTimeCharDB.alarms = {} end
+  CharDB = fr0z3nUI_DateTimeCharDB
 end
 
 local TOOLTIP_SECTIONS = {
@@ -323,11 +467,7 @@ local function MoveTooltipSectionTo(key, targetIndex)
   DB.tooltipOrder = order
 end
 
-local function EnsureCharDB()
-  if type(fr0z3nUI_DateTimeCharDB) ~= "table" then fr0z3nUI_DateTimeCharDB = {} end
-  if type(fr0z3nUI_DateTimeCharDB.alarms) ~= "table" then fr0z3nUI_DateTimeCharDB.alarms = {} end
-  CharDB = fr0z3nUI_DateTimeCharDB
-end
+-- EnsureCharDB is defined above (supports AceDB when present)
 
 local function GetAccountAlarms()
   if not DB then return {} end
@@ -1097,6 +1237,10 @@ local function ApplyFonts()
   end
 
   local lsmName = presetKey:match("^lsm:(.+)$")
+  if lsmName then
+    lsmName = tostring(lsmName):gsub("^%s+", ""):gsub("%s+$", "")
+    if lsmName == "" then lsmName = nil end
+  end
 
   local function ResolveFirstWorkingFont(candidates)
     if type(candidates) ~= "table" then return nil end
@@ -1152,9 +1296,68 @@ local function ApplyFonts()
       font = ResolveFirstWorkingFont({ p }) or p
     end
   elseif lsmName then
+    EnsureFontLibsLoaded()
+
+    if type(DB.lsmFontPaths) ~= "table" then
+      DB.lsmFontPaths = {}
+    end
+
+    local cached = DB.lsmFontPaths[lsmName]
     local p = ResolveLSMFontPath(lsmName)
+
+    local candidates = {}
+    -- If the font isn't currently registered in LSM (p is nil/empty), don't keep using a stale cached path.
+    -- This makes disabling a media-pack addon reliably fall back instead of "sticking" to an old file path.
     if type(p) == "string" and p ~= "" then
-      font = ResolveFirstWorkingFont({ p }) or p
+      candidates[#candidates + 1] = p
+      if type(cached) == "string" and cached ~= "" and cached ~= p then
+        candidates[#candidates + 1] = cached
+      end
+    end
+
+    if #candidates > 0 then
+      local chosen = ResolveFirstWorkingFont(candidates)
+      if chosen then
+        font = chosen
+      else
+        -- Selected LSM font exists by name, but the resolved file isn't usable anymore (missing/invalid).
+        -- Clear bad cache so a future reload can re-resolve cleanly.
+        if type(DB.lsmFontPaths) == "table" then
+          DB.lsmFontPaths[lsmName] = nil
+        end
+
+        local fallbackCandidates = {
+          "Interface\\AddOns\\fr0z3nUI_DateTime\\media\\Bazooka.ttf",
+          "Interface\\AddOns\\fr0z3nUI_DateTime\\media\\bazooka.ttf",
+        }
+        font = ResolveFirstWorkingFont(fallbackCandidates) or fallbackCandidates[1]
+
+        clockFrame._missingLSMWarned = clockFrame._missingLSMWarned or {}
+        if not clockFrame._missingLSMWarned[lsmName] then
+          clockFrame._missingLSMWarned[lsmName] = true
+          Print("LSM font missing/unusable: " .. tostring(lsmName) .. ". Falling back to Bazooka.")
+        end
+      end
+    else
+      -- Font not registered in LSM (or LSM not ready yet): use a stable fallback and retry shortly.
+      if type(DB.lsmFontPaths) == "table" then
+        DB.lsmFontPaths[lsmName] = nil
+      end
+      local fallbackCandidates = {
+        "Interface\\AddOns\\fr0z3nUI_DateTime\\media\\Bazooka.ttf",
+        "Interface\\AddOns\\fr0z3nUI_DateTime\\media\\bazooka.ttf",
+      }
+      font = ResolveFirstWorkingFont(fallbackCandidates) or fallbackCandidates[1]
+
+      if C_Timer and C_Timer.After and not clockFrame._pendingLSMFontRetry then
+        clockFrame._pendingLSMFontRetry = true
+        C_Timer.After(1.0, function()
+          if not clockFrame then return end
+          clockFrame._pendingLSMFontRetry = nil
+          ApplyFonts()
+          ApplyState()
+        end)
+      end
     end
   else
     for _, p in ipairs(FONT_PRESETS) do
@@ -1177,6 +1380,11 @@ local function ApplyFonts()
       clockFrame._lastBazookaResolved = font
       Print("Bazooka resolved to: " .. tostring(font))
     end
+  end
+
+  if clockFrame then
+    clockFrame._resolvedFontPath = font
+    clockFrame._resolvedFontPreset = tostring(DB.fontPreset or "default")
   end
 
   local function SetFS(fs, size, outline)
@@ -1827,12 +2035,10 @@ local function EnsureOptionsFrame()
   fontLabel:SetPoint("TOPLEFT", 16, -434)
   fontLabel:SetText("Font")
 
-  local AceGUI
-  do
-    local ls = _G and rawget(_G, "LibStub")
-    if type(ls) == "function" then
-      AceGUI = ls("AceGUI-3.0", true)
-    end
+  local function GetAceGUI()
+    EnsureFontLibsLoaded()
+    local ls = GetLibStub()
+    return LibStubGetLibrary(ls, "AceGUI-3.0", true)
   end
 
   f.fontPreset = CreateFrame("Button", nil, f.panelGeneral, "UIPanelButtonTemplate")
@@ -1854,61 +2060,102 @@ local function EnsureOptionsFrame()
     return out
   end
 
-  if AceGUI and type(AceGUI.Create) == "function" then
+  local function UpdateAceFontDropdownList()
+    ---@type any
+    local w = f._aceFontPreset
+    if not (w and w.SetList) then return end
+    local list = {}
+    for _, e in ipairs(GetFontPresetEntries()) do
+      list[e.key] = e.lsm and ("LSM: " .. e.name) or e.name
+    end
+    w:SetList(list)
+  end
+
+  function f:TryInitAceFontDropdown()
+    if self._aceFontPreset then
+      UpdateAceFontDropdownList()
+      return true
+    end
+
+    local AceGUI = GetAceGUI()
+    if not (AceGUI and type(AceGUI.Create) == "function") then
+      self._aceFontInitError = "AceGUI-3.0 unavailable"
+      return false
+    end
+
     local ok, widget = pcall(AceGUI.Create, AceGUI, "Dropdown")
     ---@type any
     local w = widget
-    if ok and w and w.frame then
-      f._aceFontPreset = w
-      w.frame:SetParent(f.panelGeneral)
-      w.frame:ClearAllPoints()
-      w.frame:SetPoint("TOPLEFT", 16, -450)
-      if w.frame.SetFrameLevel and f.fontPreset.GetFrameLevel then
-        w.frame:SetFrameLevel((f.fontPreset:GetFrameLevel() or 1) + 1)
-      end
-
-      if w.SetLabel then w:SetLabel("") end
-      if w.label and w.label.Hide then w.label:Hide() end
-
-      if w.dropdown and w.dropdown.ClearAllPoints and w.dropdown.SetPoint then
-        w.dropdown:ClearAllPoints()
-        w.dropdown:SetPoint("TOPLEFT", w.frame, "TOPLEFT", 0, 0)
-        w.dropdown:SetPoint("TOPRIGHT", w.frame, "TOPRIGHT", 0, 0)
-      end
-      if w.dropdown and w.dropdown.SetHeight then w.dropdown:SetHeight(20) end
-      if w.frame.SetHeight then w.frame:SetHeight(20) end
-      if w.SetWidth then w:SetWidth(160) end
-
-      do
-        local list = {}
-        for _, e in ipairs(GetFontPresetEntries()) do
-          list[e.key] = e.lsm and ("LSM: " .. e.name) or e.name
-        end
-        if w.SetList then w:SetList(list) end
-      end
-
-      if w.SetValue then
-        w:SetValue(tostring(DB.fontPreset or "default"))
-      end
-
-      if w.SetCallback then
-        w:SetCallback("OnValueChanged", function(_, _, key)
-          key = tostring(key or "default")
-          DB.fontPreset = key
-          if key ~= "custom" then
-            DB.fontPath = ""
-            if f.fontPath then f.fontPath:SetText("") end
-          end
-          if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
-          ApplyFonts()
-          ApplyState()
-          if f.Refresh then f:Refresh() end
-        end)
-      end
-
-      if f.fontPreset.Hide then f.fontPreset:Hide() end
-      if f.fontPreset.Disable then f.fontPreset:Disable() end
+    if not (ok and w and w.frame) then
+      self._aceFontInitError = "AceGUI.Create('Dropdown') failed"
+      return false
     end
+
+    self._aceFontPreset = w
+    w.frame:SetParent(self.panelGeneral)
+    w.frame:ClearAllPoints()
+    w.frame:SetPoint("TOPLEFT", 16, -450)
+    if w.frame.SetFrameLevel and self.fontPreset.GetFrameLevel then
+      w.frame:SetFrameLevel((self.fontPreset:GetFrameLevel() or 1) + 1)
+    end
+
+    if w.SetLabel then w:SetLabel("") end
+    if w.label and w.label.Hide then w.label:Hide() end
+
+    if w.dropdown and w.dropdown.ClearAllPoints and w.dropdown.SetPoint then
+      w.dropdown:ClearAllPoints()
+      w.dropdown:SetPoint("TOPLEFT", w.frame, "TOPLEFT", 0, 0)
+      w.dropdown:SetPoint("TOPRIGHT", w.frame, "TOPRIGHT", 0, 0)
+    end
+    if w.dropdown and w.dropdown.SetHeight then w.dropdown:SetHeight(20) end
+    if w.frame.SetHeight then w.frame:SetHeight(20) end
+    if w.SetWidth then w:SetWidth(160) end
+
+    UpdateAceFontDropdownList()
+
+    if w.SetValue then
+      w:SetValue(tostring(DB.fontPreset or "default"))
+    end
+
+    if w.SetCallback then
+      w:SetCallback("OnValueChanged", function(_, _, key)
+        key = tostring(key or "default")
+        DB.fontPreset = key
+
+        local lsmNameSel = key:match("^lsm:(.+)$")
+        if lsmNameSel then
+          if type(DB.lsmFontPaths) ~= "table" then DB.lsmFontPaths = {} end
+          local p = ResolveLSMFontPath(lsmNameSel)
+          if type(p) == "string" and p ~= "" then
+            DB.lsmFontPaths[lsmNameSel] = p
+          end
+        end
+
+        if key ~= "custom" then
+          DB.fontPath = ""
+          if self.fontPath then self.fontPath:SetText("") end
+        end
+        if self._UpdateFontPathUI then self:_UpdateFontPathUI() end
+        ApplyFonts()
+        ApplyState()
+        if self.Refresh then self:Refresh() end
+      end)
+    end
+
+    if self.fontPreset.Hide then self.fontPreset:Hide() end
+    if self.fontPreset.Disable then self.fontPreset:Disable() end
+    self._aceFontInitError = nil
+    return true
+  end
+
+  f:TryInitAceFontDropdown()
+
+  if f.panelGeneral and f.panelGeneral.HookScript then
+    f.panelGeneral:HookScript("OnShow", function()
+      if f.TryInitAceFontDropdown then
+        f:TryInitAceFontDropdown()
+      end
+    end)
   end
 
   f.fontPath = CreateFrame("EditBox", nil, f.panelGeneral, "InputBoxTemplate")
@@ -1971,6 +2218,16 @@ local function EnsureOptionsFrame()
         local function ApplyFontPreset(presetKey)
           presetKey = tostring(presetKey or "default")
           DB.fontPreset = presetKey
+
+          local lsmNameSel = presetKey:match("^lsm:(.+)$")
+          if lsmNameSel then
+            if type(DB.lsmFontPaths) ~= "table" then DB.lsmFontPaths = {} end
+            local p = ResolveLSMFontPath(lsmNameSel)
+            if type(p) == "string" and p ~= "" then
+              DB.lsmFontPaths[lsmNameSel] = p
+            end
+          end
+
           if presetKey ~= "custom" then
             DB.fontPath = ""
             if f.fontPath then f.fontPath:SetText("") end
@@ -3071,6 +3328,9 @@ local function EnsureOptionsFrame()
     f.tipOffset:SetValue(ClampNum(tonumber(DB.tooltipOffset), 0, 80))
     if f.tipWidth then f.tipWidth:SetValue(ClampNum(tonumber(DB.tooltipWidth), 160, 420)) end
     do
+      if f.TryInitAceFontDropdown then
+        f:TryInitAceFontDropdown()
+      end
       local key = tostring(DB.fontPreset or "default")
       if key == "lsm" then key = "bazooka" end
       local disp = key
@@ -3185,6 +3445,152 @@ local function HandleSlash(msg)
     return
   end
 
+  if msg == "debugfont" then
+    EnsureFontLibsLoaded()
+    ApplyFonts()
+    ApplyState()
+
+    local f = nil
+    if type(EnsureOptionsFrame) == "function" then
+      f = EnsureOptionsFrame()
+      if f and f.TryInitAceFontDropdown then
+        f:TryInitAceFontDropdown()
+      end
+    end
+
+    local ls = GetLibStub()
+    local aceGUI = nil
+    local lsmLib = nil
+    aceGUI = LibStubGetLibrary(ls, "AceGUI-3.0", true)
+    lsmLib = LibStubGetLibrary(ls, "LibSharedMedia-3.0", true)
+
+    local hasAceDropdown = (f and f._aceFontPreset) and true or false
+    local aceErr = (f and f._aceFontInitError) or nil
+    local lsm = GetLibSharedMedia()
+    local lsmCount = 0
+    do
+      local names = GetLSMFontNames()
+      if type(names) == "table" then
+        lsmCount = #names
+      end
+    end
+
+    local preset = tostring(DB and DB.fontPreset or "?")
+    local resolved = clockFrame and clockFrame._resolvedFontPath or nil
+    local lsmName = preset:match("^lsm:(.+)$")
+    if lsmName then
+      lsmName = tostring(lsmName):gsub("^%s+", ""):gsub("%s+$", "")
+      if lsmName == "" then lsmName = nil end
+    end
+    local cached = (lsmName and type(DB and DB.lsmFontPaths) == "table") and DB.lsmFontPaths[lsmName] or nil
+    local current = nil
+    if clockFrame and clockFrame.time and clockFrame.time.GetFont then
+      local fpath = clockFrame.time:GetFont()
+      if type(fpath) == "string" then
+        current = fpath
+      end
+    end
+
+    Print("Font preset: " .. preset)
+    Print("LibStub: " .. tostring(type(ls)))
+    Print("AceGUI lib: " .. tostring(aceGUI ~= nil) .. " | LSM lib: " .. tostring(lsmLib ~= nil))
+    Print("AceGUI dropdown: " .. tostring(hasAceDropdown) .. (aceErr and (" (" .. tostring(aceErr) .. ")") or ""))
+    Print("LibSharedMedia: " .. tostring(lsm ~= nil) .. " | LSM fonts: " .. tostring(lsmCount))
+    if lsmName then
+      Print("LSM name: " .. tostring(lsmName))
+      Print("LSM cached path: " .. tostring(cached or "<none>"))
+    end
+    Print("Resolved path: " .. tostring(resolved or "<none>"))
+    Print("Applied to time FS: " .. tostring(current or "<unknown>"))
+    return
+  end
+
+  if msg == "debuglsm" then
+    EnsureFontLibsLoaded()
+    if type(RegisterBundledFontsWithLSM) == "function" then
+      RegisterBundledFontsWithLSM()
+    end
+    local baz = ResolveLSMFontPath("Bazooka")
+    local names = GetLSMFontNames()
+    local count = (type(names) == "table") and #names or 0
+    Print("LSM Bazooka registered: " .. tostring(type(baz) == "string" and baz ~= ""))
+    Print("LSM Bazooka path: " .. tostring(baz or "<none>"))
+    Print("LSM font count: " .. tostring(count))
+    return
+  end
+
+  if msg == "debuglibs" then
+    EnsureFontLibsLoaded()
+
+    local f = nil
+    if type(EnsureOptionsFrame) == "function" then
+      f = EnsureOptionsFrame()
+      if f and f.TryInitAceFontDropdown then
+        f:TryInitAceFontDropdown()
+      end
+    end
+
+    local ls = GetLibStub()
+    local aceGUI = nil
+    local aceDB = nil
+    local lsmLib = nil
+    aceGUI = LibStubGetLibrary(ls, "AceGUI-3.0", true)
+    aceDB = LibStubGetLibrary(ls, "AceDB-3.0", true)
+    lsmLib = LibStubGetLibrary(ls, "LibSharedMedia-3.0", true)
+
+    local cAddOns = _G and rawget(_G, "C_AddOns")
+    local IsAddOnLoaded = _G and rawget(_G, "IsAddOnLoaded")
+    local GetAddOnInfo = _G and rawget(_G, "GetAddOnInfo")
+    local GetAddOnMetadata = _G and rawget(_G, "GetAddOnMetadata")
+    local isLoaded = nil
+    local loadable = nil
+    if type(cAddOns) == "table" and type(cAddOns.IsAddOnLoaded) == "function" then
+      isLoaded = function(name)
+        local ok, v = pcall(cAddOns.IsAddOnLoaded, name)
+        if ok then return v end
+        return nil
+      end
+    elseif type(IsAddOnLoaded) == "function" then
+      isLoaded = function(name)
+        local ok, v = pcall(IsAddOnLoaded, name)
+        if ok then return v end
+        return nil
+      end
+    end
+
+    if type(GetAddOnInfo) == "function" then
+      loadable = function(name)
+        local ok, title, notes, loadableFlag, reason, security = pcall(GetAddOnInfo, name)
+        if ok then
+          return { title = title, notes = notes, loadable = loadableFlag, reason = reason, security = security }
+        end
+        return nil
+      end
+    end
+
+    Print("Addon: " .. tostring(ADDON))
+    if type(GetAddOnMetadata) == "function" then
+      local ok, v = pcall(GetAddOnMetadata, ADDON, "Version")
+      if ok then Print("Version: " .. tostring(v or "?")) end
+    end
+    Print("LibStub type: " .. tostring(type(ls)))
+    Print("AceGUI-3.0: " .. tostring(aceGUI ~= nil))
+    Print("AceDB-3.0: " .. tostring(aceDB ~= nil))
+    Print("LibSharedMedia-3.0: " .. tostring(lsmLib ~= nil))
+
+    if isLoaded then
+      Print("IsAddOnLoaded(Ace3): " .. tostring(isLoaded("Ace3")))
+      Print("IsAddOnLoaded(LibSharedMedia-3.0): " .. tostring(isLoaded("LibSharedMedia-3.0")))
+    end
+    if loadable then
+      local info = loadable("Ace3")
+      if info then Print("GetAddOnInfo(Ace3): loadable=" .. tostring(info.loadable) .. " reason=" .. tostring(info.reason)) end
+      local info2 = loadable("LibSharedMedia-3.0")
+      if info2 then Print("GetAddOnInfo(LSM): loadable=" .. tostring(info2.loadable) .. " reason=" .. tostring(info2.reason)) end
+    end
+    return
+  end
+
   do
     local s = msg:match("^scale%s+([%d%.]+)$")
     if s then
@@ -3220,7 +3626,11 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:SetScript("OnEvent", function(_, event)
   if event ~= "PLAYER_LOGIN" then return end
 
-  EnsureDB()
+  if not TryInitAceDB() then
+    EnsureDB()
+  end
+  EnsureCharDB()
+  RegisterBundledFontsWithLSM()
   EnsureClockFrame()
 
   SLASH_FR0Z3NUIDATETIME1 = "/fdt"
