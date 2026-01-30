@@ -1,34 +1,23 @@
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.1",
+  "runtime.builtin": {
+    "basic": true,
+    "coroutine": true,
+    "math": true,
+    "string": true,
+    "table": true
+  },
   "workspace.checkThirdParty": false,
+  "workspace.ignoreDir": [
+    "Libs",
+    "Libs/**",
+    "**/Libs",
+    "**/Libs/**"
+  ],
   "type.weakUnionCheck": true,
-  "diagnostics.globals": [
-    "print",
-    "SlashCmdList",
-    "DEFAULT_CHAT_FRAME",
-
-    "UISpecialFrames",
-    "SOUNDKIT",
-
-    "CreateFrame",
-    "UIParent",
-    "BackdropTemplate",
-    "BasicFrameTemplateWithInset",
-
-    "GameTooltip",
-
-    "UIDropDownMenu_Initialize",
-    "UIDropDownMenu_CreateInfo",
-    "UIDropDownMenu_AddButton",
-    "UIDropDownMenu_SetWidth",
-    "UIDropDownMenu_SetText",
-    "ToggleDropDownMenu",
-
-    "ColorPickerFrame",
-
-    "C_DateAndTime",
-    "C_Timer",
-    "Enum"
+  "diagnostics.neededFileStatus": "Opened",
+  "diagnostics.disable": [
+    "invisible"
   ]
 }
