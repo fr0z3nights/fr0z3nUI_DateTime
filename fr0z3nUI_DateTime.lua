@@ -4,6 +4,11 @@ local ADDON, ns = ...
 local UISpecialFrames = _G and rawget(_G, "UISpecialFrames")
 local SOUNDKIT = _G and rawget(_G, "SOUNDKIT")
 
+local UIParentLoadAddOn = _G and rawget(_G, "UIParentLoadAddOn")
+local PVEFrame_ToggleFrame = _G and rawget(_G, "PVEFrame_ToggleFrame")
+local LFG_JoinDungeon = _G and rawget(_G, "LFG_JoinDungeon")
+local LE_LFG_CATEGORY_LFD = _G and rawget(_G, "LE_LFG_CATEGORY_LFD")
+
 local UIDropDownMenu_Initialize = _G and rawget(_G, "UIDropDownMenu_Initialize")
 local UIDropDownMenu_CreateInfo = _G and rawget(_G, "UIDropDownMenu_CreateInfo")
 local UIDropDownMenu_AddButton = _G and rawget(_G, "UIDropDownMenu_AddButton")
@@ -53,7 +58,7 @@ local DEFAULTS = {
   tooltipOffset = 0, -- horizontal offset from the widget edge
   tooltipYOffset = 0,
   tooltipWidth = 200,
-  tooltipOrder = { "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" },
+  tooltipOrder = { "events", "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" },
   fontPreset = "bazooka",
   fontPath = "",
   lsmFontPaths = {}, -- maps LSM font name -> resolved file path (stabilizes against name remaps)
@@ -73,6 +78,7 @@ local DEFAULTS = {
   ampmYOffset = 0,
   colonUseClass = true,
   colonColor = { 1, 1, 1, 1 },
+  priestVoidColor = true,
   colorMode = "someclass", -- solid | someclass | allclass | custom
   customColors = {
     day = { 1, 1, 1, 1 },
@@ -355,7 +361,7 @@ local function EnsureDB()
 
   -- Ensure tooltip order is valid.
   if type(DB.tooltipOrder) ~= "table" then
-    DB.tooltipOrder = { "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" }
+    DB.tooltipOrder = { "events", "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" }
   end
 end
 
@@ -376,6 +382,7 @@ local function EnsureCharDB()
 end
 
 local TOOLTIP_SECTIONS = {
+  { key = "events", name = "Current events" },
   { key = "realm", name = "Realm time" },
   { key = "day", name = "Day (when hidden)" },
   { key = "date", name = "Date (when hidden)" },
@@ -388,7 +395,7 @@ local TOOLTIP_SECTIONS = {
 }
 
 local function GetDefaultTooltipOrder()
-  return { "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" }
+  return { "events", "realm", "day", "date", "daily", "weekly", "extra1", "extra2", "extra3", "lockouts" }
 end
 
 local function NormalizeTooltipOrder()
@@ -519,6 +526,13 @@ local function GetPlayerClassRGB()
   if not (UnitClass and colors) then return 1, 1, 1 end
   local _, classToken = UnitClass("player")
   if not classToken then return 1, 1, 1 end
+
+  -- Priest class color is white, which makes class-colored elements unreadable.
+  -- Default to a voidy purple; allow disabling via option.
+  if classToken == "PRIEST" and not (DB and DB.priestVoidColor == false) then
+    return 0.55, 0.25, 0.85
+  end
+
   local c = colors[classToken]
   if not c then return 1, 1, 1 end
   return tonumber(c.r) or 1, tonumber(c.g) or 1, tonumber(c.b) or 1
@@ -1084,17 +1098,34 @@ local function UpdateClockText()
   local mode = tostring((DB and DB.layoutMode) or "STACKED"):upper()
   if not showDay then mode = "STACKED" end
 
+  -- Timewalking: alternate Day line between weekday and TW label when active.
+  local tw = ns and ns.Timewalking
+  local twKey = showDay and tw and type(tw.GetActiveKey) == "function" and tw.GetActiveKey(now) or nil
+  local twText = nil
+  if twKey then
+    local label = (tw and type(tw.GetLabel) == "function" and tw.GetLabel(twKey)) or twKey
+    twText = "TW: " .. tostring(label)
+  end
+  local showTW = (twText ~= nil) and ((math.floor((now or 0) / 5) % 2) == 1) or false
+
   if showDay and mode == "INLINE" then
     if clockFrame.day then
       if showDate then
-        clockFrame.day:SetText(string.format("%s  %s", day, dateStr))
+        local left = showTW and twText or day
+        clockFrame.day:SetText(string.format("%s  %s", left, dateStr))
       else
-        clockFrame.day:SetText(day)
+        clockFrame.day:SetText(showTW and twText or day)
       end
     end
     if clockFrame.date then clockFrame.date:SetText("") end
   else
-    if clockFrame.day then clockFrame.day:SetText(showDay and day or "") end
+    if clockFrame.day then
+      if showDay then
+        clockFrame.day:SetText(showTW and twText or day)
+      else
+        clockFrame.day:SetText("")
+      end
+    end
     if clockFrame.date then clockFrame.date:SetText(showDate and dateStr or "") end
   end
   if DB and tostring(DB.colorMode or "someclass"):lower() == "someclass" then
@@ -1208,6 +1239,12 @@ ApplyState = function()
       if DB and DB.alarmClickToStop and IsAlarmActive() then
         StopActiveAlarm()
         return
+      end
+
+      -- Merge LFD Timewalking: left-click queues active Timewalking.
+      local tw = ns and ns.Timewalking
+      if tw and type(tw.TryQueueActive) == "function" then
+        tw.TryQueueActive(true)
       end
       return
     end
@@ -1496,6 +1533,15 @@ local function EnsureClockFrame()
 
     local now = GetBaseTimeSeconds()
 
+    local function AddEvents()
+      local tw = ns and ns.Timewalking
+      if tw and type(tw.AddEventsToTooltip) == "function" then
+        local ok, shown = pcall(tw.AddEventsToTooltip, GameTooltip, now)
+        return ok and shown and true or false
+      end
+      return false
+    end
+
     local function AddRealmTime()
       local tt, aap = FormatClockTimeAt(now)
       if type(tt) == "string" and tt ~= "" then
@@ -1615,6 +1661,7 @@ local function EnsureClockFrame()
     end
 
     local sectionAdders = {
+      events = { fn = AddEvents, gap = false },
       realm = { fn = AddRealmTime, gap = false },
       day = { fn = AddHiddenDay, gap = false },
       date = { fn = AddHiddenDate, gap = false },
@@ -2704,11 +2751,10 @@ local function EnsureOptionsFrame()
     end
 
     local function OpenColorPicker(r, g, b, a, onChange)
-      if not ColorPickerFrame then
+      if not (ColorPickerFrame and ColorPickerFrame.SetupColorPickerAndShow) then
         Print("Color picker unavailable.")
         return
       end
-      local op = _G and rawget(_G, "OpacitySliderFrame")
       r, g, b, a = ClampNum(r, 0, 1), ClampNum(g, 0, 1), ClampNum(b, 0, 1), ClampNum(a, 0, 1)
 
       local function Apply()
@@ -2722,8 +2768,6 @@ local function EnsureOptionsFrame()
         local na = a
         if ColorPickerFrame.HasOpacity and ColorPickerFrame:HasOpacity() and ColorPickerFrame.GetColorAlpha then
           na = ColorPickerFrame:GetColorAlpha()
-        elseif op and op.GetValue then
-          na = 1 - (op:GetValue() or 0)
         end
 
         if type(onChange) == "function" then
@@ -2731,38 +2775,18 @@ local function EnsureOptionsFrame()
         end
       end
 
-      if ColorPickerFrame.SetupColorPickerAndShow then
-        ColorPickerFrame:SetupColorPickerAndShow({
-          r = r, g = g, b = b,
-          opacity = 1 - a,
-          hasOpacity = true,
-          swatchFunc = Apply,
-          opacityFunc = Apply,
-          cancelFunc = function(prev)
-            if type(onChange) == "function" then
-              onChange(prev.r, prev.g, prev.b, 1 - (prev.opacity or 0))
-            end
-          end,
-        })
-      else
-        ColorPickerFrame.func = Apply
-        ColorPickerFrame.opacityFunc = Apply
-        ColorPickerFrame.cancelFunc = function(prev)
+      ColorPickerFrame:SetupColorPickerAndShow({
+        r = r, g = g, b = b,
+        opacity = 1 - a,
+        hasOpacity = true,
+        swatchFunc = Apply,
+        opacityFunc = Apply,
+        cancelFunc = function(prev)
           if type(onChange) == "function" and type(prev) == "table" then
             onChange(prev.r, prev.g, prev.b, 1 - (prev.opacity or 0))
           end
-        end
-        ColorPickerFrame.hasOpacity = true
-        ColorPickerFrame.opacity = 1 - a
-        ColorPickerFrame.previousValues = { r = r, g = g, b = b, opacity = 1 - a }
-        if ColorPickerFrame.SetColorRGB then
-          ColorPickerFrame:SetColorRGB(r, g, b)
-        end
-        if op and op.SetValue then
-          op:SetValue(1 - a)
-        end
-        ColorPickerFrame:Show()
-      end
+        end,
+      })
     end
 
     local function UpdateStyleUI()
@@ -2802,6 +2826,25 @@ local function EnsureOptionsFrame()
       if f.colonUseClass then
         f.colonUseClass:SetChecked(DB.colonUseClass and true or false)
       end
+
+      if f.priestVoidColor then
+        local isVoid = not (DB and DB.priestVoidColor == false)
+        f.priestVoidColor:SetChecked(isVoid)
+        if f.priestVoidColor.text and f.priestVoidColor.text.SetText then
+          f.priestVoidColor.text:SetText(isVoid and "Void" or "Light")
+        end
+        local classToken
+        if UnitClass then
+          classToken = select(2, UnitClass("player"))
+        end
+        if classToken == "PRIEST" then
+          f.priestVoidColor:Show()
+          f.priestVoidColor:Enable()
+        else
+          f.priestVoidColor:Hide()
+        end
+      end
+
       if f.colorColon then
         local c = (DB and type(DB.colonColor) == "table") and DB.colonColor or { 1, 1, 1, 1 }
         SetSwatch(f.colorColon, c[1], c[2], c[3], c[4])
@@ -2912,6 +2955,21 @@ local function EnsureOptionsFrame()
     f.colonUseClass.text:SetText("Colon uses class color")
     f.colonUseClass:SetScript("OnClick", function(self)
       DB.colonUseClass = self:GetChecked() and true or false
+      ApplyState()
+      if f._UpdateStyleUI then f._UpdateStyleUI() end
+    end)
+
+    f.priestVoidColor = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
+    f.priestVoidColor:SetPoint("TOPLEFT", 240, -584)
+
+    -- Label is dynamic (Void vs Light) and is updated in UpdateStyleUI.
+    f.priestVoidColor.text:SetText("Void")
+	f.priestVoidColor:Hide()
+    f.priestVoidColor:SetScript("OnClick", function(self)
+      DB.priestVoidColor = self:GetChecked() and true or false
+      if self.text and self.text.SetText then
+        self.text:SetText((DB and DB.priestVoidColor == false) and "Light" or "Void")
+      end
       ApplyState()
       if f._UpdateStyleUI then f._UpdateStyleUI() end
     end)
@@ -3591,6 +3649,26 @@ local function HandleSlash(msg)
     return
   end
 
+  if msg == "twlist" then
+    local tw = ns and ns.Timewalking
+    if tw and type(tw.PrintTimewalkingDungeonList) == "function" then
+      tw.PrintTimewalkingDungeonList()
+    else
+      Print("Timewalking module not loaded.")
+    end
+    return
+  end
+
+  if msg == "twid" or msg == "shadowlands" or msg == "sl" then
+    local tw = ns and ns.Timewalking
+    if tw and type(tw.PrintShadowlandsTimewalkingHint) == "function" then
+      tw.PrintShadowlandsTimewalkingHint()
+    else
+      Print("Timewalking module not loaded.")
+    end
+    return
+  end
+
   do
     local s = msg:match("^scale%s+([%d%.]+)$")
     if s then
@@ -3638,5 +3716,39 @@ eventFrame:SetScript("OnEvent", function(_, event)
 
   if DB.enabled then
     Print("Loaded. /fdt")
+
+    -- Debug/visibility: print detected Timewalking shortly after login.
+    -- Calendar/LFG info can be unavailable right on PLAYER_LOGIN, so do one retry.
+    local function PrintTimewalkingStatus(tag)
+      local tw = ns and ns.Timewalking
+      if not (tw and type(tw.GetActiveKey) == "function") then
+        return nil
+      end
+
+      local key = tw.GetActiveKey(time())
+      if not key then
+        return nil
+      end
+
+      local label = (type(tw.GetLabel) == "function" and tw.GetLabel(key)) or key
+      local id = tw.LFG_IDS and tw.LFG_IDS[key] or nil
+      if id then
+        Print("Timewalking (" .. tostring(tag) .. "): " .. tostring(label) .. " (" .. tostring(id) .. ")")
+      else
+        Print("Timewalking (" .. tostring(tag) .. "): " .. tostring(label))
+      end
+      return true
+    end
+
+    if C_Timer and C_Timer.After then
+      C_Timer.After(2.0, function()
+        local ok = PrintTimewalkingStatus("load")
+        if not ok then
+          C_Timer.After(8.0, function()
+            PrintTimewalkingStatus("retry")
+          end)
+        end
+      end)
+    end
   end
 end)

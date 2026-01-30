@@ -31,4 +31,5 @@ Libs\LibSharedMedia-3.0\lib.xml
 # /run print("TOC interface =", select(4, GetBuildInfo()))
 # 12.0.0 reminder: bump to 120000
 
+fr0z3nUI_DateTimeWalking.lua
 fr0z3nUI_DateTime.lua
