@@ -401,7 +401,7 @@ end
 
 local function IsHolidayRewardAvailable(dungeonID)
   dungeonID = tonumber(dungeonID)
-  if not dungeonID then return false end
+  if not dungeonID then return false, false end
 
   -- Fallback: if the Heart-Shaped Box was already looted today, hide the button until daily reset.
   do
@@ -411,7 +411,7 @@ local function IsHolidayRewardAvailable(dungeonID)
       if now >= resetAt then
         CharDB.valentineBoxLootedResetAt = nil
       else
-        return false
+        return false, false
       end
     end
   end
@@ -431,7 +431,7 @@ local function IsHolidayRewardAvailable(dungeonID)
   end
 
   if done == true then
-    return false
+    return false, false
   end
 
   -- Confirm the reward list includes the Heart-Shaped Box (best-effort).
@@ -463,15 +463,19 @@ local function IsHolidayRewardAvailable(dungeonID)
   end
 
   if hasBox == false then
-    return false
+    return false, false
   end
 
   -- If we couldn't determine done state but can see the reward, treat it as available.
   if done == nil then
-    return hasBox == true
+    if hasBox == true then
+      return true, false
+    end
+    -- Neither done-state nor reward list is available yet.
+    return false, true
   end
 
-  return done == false
+  return done == false, false
 end
 
 local function PositionValentineButton(f)
@@ -502,11 +506,11 @@ local function PositionValentineButton(f)
   end
 end
 
-local function UpdateValentineButton(now)
+local function UpdateValentineButton(now, force)
   if not clockFrame or not clockFrame.valentineButton then return end
 
   now = tonumber(now) or (type(time) == "function" and time() or 0)
-  if clockFrame._valentineNextCheck and now < clockFrame._valentineNextCheck then
+  if not force and clockFrame._valentineNextCheck and now < clockFrame._valentineNextCheck then
     return
   end
   clockFrame._valentineNextCheck = now + 15
@@ -535,10 +539,24 @@ local function UpdateValentineButton(now)
     return
   end
 
-  if IsHolidayRewardAvailable(LOVE_IS_IN_THE_AIR_DUNGEON_ID) then
+  local okReward, uncertain = IsHolidayRewardAvailable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+  if okReward then
     clockFrame.valentineButton:Show()
   else
     clockFrame.valentineButton:Hide()
+    if uncertain and C_Timer and C_Timer.After then
+      -- LFG reward state can be unavailable right after login/zone/queue updates.
+      -- Do a couple quick retries (doesn't bypass combat lockdown for the click).
+      if not clockFrame._valentineRetryAt or now >= clockFrame._valentineRetryAt then
+        clockFrame._valentineRetryAt = now + 12
+        C_Timer.After(2.0, function()
+          UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        end)
+        C_Timer.After(8.0, function()
+          UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        end)
+      end
+    end
   end
 end
 
@@ -4113,6 +4131,11 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CHAT_MSG_LOOT")
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("LFG_LOCK_INFO_RECEIVED")
+eventFrame:RegisterEvent("LFG_UPDATE")
+eventFrame:RegisterEvent("LFG_UPDATE_RANDOM_INFO")
+eventFrame:RegisterEvent("LFG_QUEUE_STATUS_UPDATE")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
   if event == "CHAT_MSG_LOOT" or event == "CHAT_MSG_SYSTEM" then
     local msg = ...
@@ -4133,6 +4156,18 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         end
         break
       end
+    end
+    return
+  end
+
+  if event == "PLAYER_ENTERING_WORLD"
+    or event == "LFG_LOCK_INFO_RECEIVED"
+    or event == "LFG_UPDATE"
+    or event == "LFG_UPDATE_RANDOM_INFO"
+    or event == "LFG_QUEUE_STATUS_UPDATE"
+  then
+    if DB and DB.enabled then
+      UpdateValentineButton(type(time) == "function" and time() or 0, true)
     end
     return
   end
@@ -4183,6 +4218,14 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             PrintTimewalkingStatus("retry")
           end)
         end
+      end)
+
+      -- Kick Valentine checks shortly after login as well.
+      C_Timer.After(2.0, function()
+        UpdateValentineButton(type(time) == "function" and time() or 0, true)
+      end)
+      C_Timer.After(8.0, function()
+        UpdateValentineButton(type(time) == "function" and time() or 0, true)
       end)
     end
   end
