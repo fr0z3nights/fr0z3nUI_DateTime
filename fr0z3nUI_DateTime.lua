@@ -55,7 +55,6 @@ local DEFAULTS = {
   scale = 1.0,
   alpha = 1.0,
   valentineSide = "AUTO", -- AUTO | LEFT | RIGHT
-  valentineBoxLootedResetAt = nil, -- time() when the "looted today" flag clears (daily reset)
   tooltipSide = "RIGHT", -- RIGHT or LEFT
   tooltipOffset = 0, -- horizontal offset from the widget edge
   tooltipYOffset = 0,
@@ -407,10 +406,10 @@ local function IsHolidayRewardAvailable(dungeonID)
   -- Fallback: if the Heart-Shaped Box was already looted today, hide the button until daily reset.
   do
     local now = type(time) == "function" and time() or 0
-    local resetAt = DB and tonumber(DB.valentineBoxLootedResetAt) or nil
+    local resetAt = CharDB and tonumber(CharDB.valentineBoxLootedResetAt) or nil
     if resetAt and resetAt > 0 then
       if now >= resetAt then
-        DB.valentineBoxLootedResetAt = nil
+        CharDB.valentineBoxLootedResetAt = nil
       else
         return false
       end
@@ -4121,14 +4120,14 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
     for itemID in msg:gmatch("item:(%d+)") do
       if tonumber(itemID) == HEART_SHAPED_BOX_ITEM_ID then
-        if DB then
+        if DB and CharDB then
           local now = type(time) == "function" and time() or 0
           local s = GetSecondsUntilDailyReset()
           if s and s > 0 then
-            DB.valentineBoxLootedResetAt = now + s
+            CharDB.valentineBoxLootedResetAt = now + s
           else
             -- If reset timing isn't available, be conservative and hide until reload.
-            DB.valentineBoxLootedResetAt = now + (12 * 60 * 60)
+            CharDB.valentineBoxLootedResetAt = now + (12 * 60 * 60)
           end
           UpdateValentineButton(now)
         end
