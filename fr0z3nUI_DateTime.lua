@@ -212,6 +212,39 @@ local LOVE_IS_IN_THE_AIR_DUNGEON_ID = 288
 local LOVE_IS_IN_THE_AIR_ICON_FILE_ID = 135450 -- inv_valentinesboxofchocolates02
 local HEART_SHAPED_BOX_ITEM_ID = 54537
 
+local function TryLoadAddOnQuiet(addonName)
+  if type(addonName) ~= "string" or addonName == "" then return false end
+
+  if C_AddOns and type(C_AddOns.DoesAddOnExist) == "function" then
+    local okExist, exists = pcall(C_AddOns.DoesAddOnExist, addonName)
+    if okExist and exists == false then
+      return false
+    end
+  end
+
+  if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
+    local okLoaded, loaded = pcall(C_AddOns.IsAddOnLoaded, addonName)
+    if okLoaded and loaded == true then
+      return true
+    end
+  end
+
+  local loader = nil
+  if C_AddOns and type(C_AddOns.LoadAddOn) == "function" then
+    loader = C_AddOns.LoadAddOn
+  else
+    loader = _G and rawget(_G, "LoadAddOn")
+  end
+
+  if type(loader) ~= "function" then
+    return false
+  end
+
+  -- Avoid UIParentLoadAddOn here: it can display UI popups on failure.
+  local ok, loaded = pcall(loader, addonName)
+  return ok and loaded == true or false
+end
+
 local function TryQueueHolidayDungeon(dungeonID)
   dungeonID = tonumber(dungeonID)
   if not dungeonID then return false end
@@ -220,10 +253,7 @@ local function TryQueueHolidayDungeon(dungeonID)
     return false
   end
 
-  local la = _G and rawget(_G, "UIParentLoadAddOn")
-  if type(la) == "function" then
-    pcall(la, "Blizzard_LookingForGroupUI")
-  end
+  TryLoadAddOnQuiet("Blizzard_LookingForGroupUI")
 
   local join = _G and rawget(_G, "LFG_JoinDungeon")
   local cat = _G and rawget(_G, "LE_LFG_CATEGORY_LFD")
@@ -358,12 +388,6 @@ end
 local function IsHolidayRewardAvailable(dungeonID)
   dungeonID = tonumber(dungeonID)
   if not dungeonID then return false end
-
-  -- Ensure LFG reward APIs exist.
-  local la = _G and rawget(_G, "UIParentLoadAddOn")
-  if type(la) == "function" then
-    pcall(la, "Blizzard_LookingForGroupUI")
-  end
 
   local done = nil
   if type(GetLFGDungeonRewards) == "function" then
