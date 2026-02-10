@@ -555,11 +555,7 @@ function TW.AddEventsToTooltip(tooltip, now)
   local shown = 0
   for _, line in ipairs(lines) do
     shown = shown + 1
-    if type(line) == "string" and line:lower():find("love is in the air", 1, true) then
-      tooltip:AddLine(line, 0.2, 1, 0.2, true)
-    else
-      tooltip:AddLine(line, 1, 1, 1, true)
-    end
+    tooltip:AddLine(line, 1, 1, 1, true)
     if shown >= 8 then break end
   end
   return true
