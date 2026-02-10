@@ -55,6 +55,7 @@ local DEFAULTS = {
   scale = 1.0,
   alpha = 1.0,
   valentineSide = "AUTO", -- AUTO | LEFT | RIGHT
+  valentineBoxLootedResetAt = nil, -- time() when the "looted today" flag clears (daily reset)
   tooltipSide = "RIGHT", -- RIGHT or LEFT
   tooltipOffset = 0, -- horizontal offset from the widget edge
   tooltipYOffset = 0,
@@ -211,6 +212,20 @@ local ApplyState
 local LOVE_IS_IN_THE_AIR_DUNGEON_ID = 288
 local LOVE_IS_IN_THE_AIR_ICON_FILE_ID = 135450 -- inv_valentinesboxofchocolates02
 local HEART_SHAPED_BOX_ITEM_ID = 54537
+
+local function GetSecondsUntilDailyReset()
+  if C_DateAndTime and type(C_DateAndTime.GetSecondsUntilDailyReset) == "function" then
+    local ok, s = pcall(C_DateAndTime.GetSecondsUntilDailyReset)
+    s = ok and tonumber(s) or nil
+    if s and s > 0 then return s end
+  end
+  if type(GetQuestResetTime) == "function" then
+    local ok, s = pcall(GetQuestResetTime)
+    s = ok and tonumber(s) or nil
+    if s and s > 0 then return s end
+  end
+  return nil
+end
 
 local function TryLoadAddOnQuiet(addonName)
   if type(addonName) ~= "string" or addonName == "" then return false end
@@ -388,6 +403,19 @@ end
 local function IsHolidayRewardAvailable(dungeonID)
   dungeonID = tonumber(dungeonID)
   if not dungeonID then return false end
+
+  -- Fallback: if the Heart-Shaped Box was already looted today, hide the button until daily reset.
+  do
+    local now = type(time) == "function" and time() or 0
+    local resetAt = DB and tonumber(DB.valentineBoxLootedResetAt) or nil
+    if resetAt and resetAt > 0 then
+      if now >= resetAt then
+        DB.valentineBoxLootedResetAt = nil
+      else
+        return false
+      end
+    end
+  end
 
   local done = nil
   if type(GetLFGDungeonRewards) == "function" then
@@ -4084,7 +4112,32 @@ end
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
-eventFrame:SetScript("OnEvent", function(_, event)
+eventFrame:RegisterEvent("CHAT_MSG_LOOT")
+eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+eventFrame:SetScript("OnEvent", function(_, event, ...)
+  if event == "CHAT_MSG_LOOT" or event == "CHAT_MSG_SYSTEM" then
+    local msg = ...
+    if type(msg) ~= "string" or msg == "" then return end
+
+    for itemID in msg:gmatch("item:(%d+)") do
+      if tonumber(itemID) == HEART_SHAPED_BOX_ITEM_ID then
+        if DB then
+          local now = type(time) == "function" and time() or 0
+          local s = GetSecondsUntilDailyReset()
+          if s and s > 0 then
+            DB.valentineBoxLootedResetAt = now + s
+          else
+            -- If reset timing isn't available, be conservative and hide until reload.
+            DB.valentineBoxLootedResetAt = now + (12 * 60 * 60)
+          end
+          UpdateValentineButton(now)
+        end
+        break
+      end
+    end
+    return
+  end
+
   if event ~= "PLAYER_LOGIN" then return end
 
   if not TryInitAceDB() then
