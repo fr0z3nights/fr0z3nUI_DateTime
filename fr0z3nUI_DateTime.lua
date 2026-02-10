@@ -54,6 +54,7 @@ local DEFAULTS = {
   showSeconds = false,
   scale = 1.0,
   alpha = 1.0,
+  valentineSide = "AUTO", -- AUTO | LEFT | RIGHT
   tooltipSide = "RIGHT", -- RIGHT or LEFT
   tooltipOffset = 0, -- horizontal offset from the widget edge
   tooltipYOffset = 0,
@@ -205,6 +206,290 @@ local optionsFrame
 
 local ResetDefaults
 local ApplyState
+
+-- Love is in the Air (Valentine's) quick-queue button
+local LOVE_IS_IN_THE_AIR_DUNGEON_ID = 288
+local LOVE_IS_IN_THE_AIR_ICON_FILE_ID = 135450 -- inv_valentinesboxofchocolates02
+local HEART_SHAPED_BOX_ITEM_ID = 54537
+
+local function TryQueueHolidayDungeon(dungeonID)
+  dungeonID = tonumber(dungeonID)
+  if not dungeonID then return false end
+
+  if InCombatLockdown and InCombatLockdown() then
+    return false
+  end
+
+  local la = _G and rawget(_G, "UIParentLoadAddOn")
+  if type(la) == "function" then
+    pcall(la, "Blizzard_LookingForGroupUI")
+  end
+
+  local join = _G and rawget(_G, "LFG_JoinDungeon")
+  local cat = _G and rawget(_G, "LE_LFG_CATEGORY_LFD")
+  if type(join) ~= "function" or not cat then
+    return false
+  end
+
+  -- Mirror EventQ's protected-call pattern.
+  local ok = pcall(join, cat, dungeonID, _G and rawget(_G, "LFDDungeonList"), _G and rawget(_G, "LFDHiddenByCollapseList"))
+  return ok and true or false
+end
+
+local function GetTodayStamp()
+  if C_DateAndTime and C_DateAndTime.GetCurrentCalendarTime then
+    local ok, t = pcall(C_DateAndTime.GetCurrentCalendarTime)
+    if ok and type(t) == "table" then
+      local y = tonumber(t.year)
+      local m = tonumber(t.month)
+      local d = tonumber(t.monthDay)
+      if y and m and d then
+        return (y * 10000) + (m * 100) + d
+      end
+    end
+  end
+  if C_Calendar and C_Calendar.GetDate then
+    local ok, t = pcall(C_Calendar.GetDate)
+    if ok and type(t) == "table" then
+      local y = tonumber(t.year)
+      local m = tonumber(t.month)
+      local d = tonumber(t.monthDay)
+      if y and m and d then
+        return (y * 10000) + (m * 100) + d
+      end
+    end
+  end
+  return nil
+end
+
+local function IsLoveIsInTheAirActiveToday()
+  if not (C_Calendar and C_Calendar.GetNumDayEvents and C_Calendar.GetDayEvent) then
+    return nil
+  end
+
+  -- Cache per-day to avoid hammering the calendar API.
+  local stamp = GetTodayStamp()
+  if clockFrame and stamp and clockFrame._valentineStamp == stamp and clockFrame._valentineActive ~= nil then
+    return clockFrame._valentineActive
+  end
+
+  if C_Calendar and C_Calendar.OpenCalendar then
+    pcall(C_Calendar.OpenCalendar)
+  end
+
+  local today = nil
+  if C_DateAndTime and C_DateAndTime.GetCurrentCalendarTime then
+    local ok, t = pcall(C_DateAndTime.GetCurrentCalendarTime)
+    if ok and type(t) == "table" and tonumber(t.monthDay) then
+      today = tonumber(t.monthDay)
+    end
+  end
+  if not today and C_Calendar and C_Calendar.GetDate then
+    local ok, t = pcall(C_Calendar.GetDate)
+    if ok and type(t) == "table" and tonumber(t.monthDay) then
+      today = tonumber(t.monthDay)
+    end
+  end
+  if not today then
+    if clockFrame then
+      clockFrame._valentineStamp = stamp
+      clockFrame._valentineActive = nil
+    end
+    return nil
+  end
+
+  local okNum, n = pcall(C_Calendar.GetNumDayEvents, 0, today)
+  n = okNum and tonumber(n) or 0
+  local active = false
+
+  for i = 1, n do
+    local okEv, ev = pcall(C_Calendar.GetDayEvent, 0, today, i)
+    if okEv and type(ev) == "table" then
+      local eventType = rawget(ev, "eventType")
+      local isHoliday = false
+      do
+        local et = Enum and Enum.CalendarEventType
+        local holidayEnum = et and (rawget(et, "Holiday") or rawget(et, "HOLIDAY"))
+        if holidayEnum ~= nil and eventType == holidayEnum then
+          isHoliday = true
+        end
+      end
+      if not isHoliday then
+        local calendarType = rawget(ev, "calendarType")
+        if type(calendarType) == "string" and tostring(calendarType):lower() == "holiday" then
+          isHoliday = true
+        end
+      end
+
+      if isHoliday and C_Calendar.GetHolidayInfo then
+        local okH, info = pcall(C_Calendar.GetHolidayInfo, 0, today, i)
+        if okH and type(info) == "table" then
+          local name = tostring(rawget(info, "name") or "")
+          local desc = tostring(rawget(info, "description") or "")
+          local hay = (name .. "\n" .. desc):lower()
+          if hay:find("love is in the air", 1, true) then
+            active = true
+            break
+          end
+        end
+      end
+    end
+  end
+
+  if clockFrame then
+    clockFrame._valentineStamp = stamp
+    clockFrame._valentineActive = active
+  end
+  return active
+end
+
+local function IsHolidayDungeonJoinable(dungeonID)
+  local fn = _G and rawget(_G, "IsLFGDungeonJoinable")
+  if type(fn) ~= "function" then
+    return nil
+  end
+  local ok, joinable = pcall(fn, tonumber(dungeonID))
+  if not ok then
+    return nil
+  end
+  return joinable and true or false
+end
+
+local function IsHolidayRewardAvailable(dungeonID)
+  dungeonID = tonumber(dungeonID)
+  if not dungeonID then return false end
+
+  -- Ensure LFG reward APIs exist.
+  local la = _G and rawget(_G, "UIParentLoadAddOn")
+  if type(la) == "function" then
+    pcall(la, "Blizzard_LookingForGroupUI")
+  end
+
+  local done = nil
+  if type(GetLFGDungeonRewards) == "function" then
+    local ok, v = pcall(GetLFGDungeonRewards, dungeonID)
+    if ok and type(v) == "boolean" then
+      done = v
+    end
+  end
+  if done == nil and type(GetLFGDungeonRewardCapInfo) == "function" then
+    local ok, v = pcall(GetLFGDungeonRewardCapInfo, dungeonID)
+    if ok and type(v) == "boolean" then
+      done = v
+    end
+  end
+
+  if done == true then
+    return false
+  end
+
+  -- Confirm the reward list includes the Heart-Shaped Box (best-effort).
+  local hasBox = nil
+  local getNumRewards = _G and rawget(_G, "GetLFGDungeonNumRewards")
+  local getRewardInfo = _G and rawget(_G, "GetLFGDungeonRewardInfo")
+  if type(getNumRewards) == "function" and type(getRewardInfo) == "function" then
+    local okNum, n = pcall(getNumRewards, dungeonID)
+    n = okNum and tonumber(n) or 0
+    if n and n > 0 then
+      hasBox = false
+      for i = 1, n do
+        local ok2, name, _, _, _, _, rewardType, rewardID, rewardLink, _, itemID = pcall(getRewardInfo, dungeonID, i)
+        if ok2 then
+          local id = tonumber(itemID) or tonumber(rewardID)
+          local link = type(rewardLink) == "string" and rewardLink or ""
+          local nm = type(name) == "string" and name or ""
+          if id == HEART_SHAPED_BOX_ITEM_ID
+            or link:find("item:" .. tostring(HEART_SHAPED_BOX_ITEM_ID), 1, true)
+            or (rewardType == "item" and nm:lower():find("heart%-shaped box"))
+            or nm:lower():find("heart%-shaped box")
+          then
+            hasBox = true
+            break
+          end
+        end
+      end
+    end
+  end
+
+  if hasBox == false then
+    return false
+  end
+
+  -- If we couldn't determine done state but can see the reward, treat it as available.
+  if done == nil then
+    return hasBox == true
+  end
+
+  return done == false
+end
+
+local function PositionValentineButton(f)
+  if not (f and f.valentineButton and f.valentineButton.ClearAllPoints) then return end
+  local b = f.valentineButton
+  b:ClearAllPoints()
+
+  local want = DB and tostring(DB.valentineSide or "AUTO"):upper() or "AUTO"
+  local side = (want == "LEFT" or want == "RIGHT") and want or "RIGHT"
+  if want == "AUTO" then
+    if f.GetCenter and UIParent and UIParent.GetWidth then
+      local cx = f:GetCenter()
+      local w = UIParent:GetWidth()
+      if type(cx) == "number" and type(w) == "number" and w > 0 then
+        if cx > (w / 2) then
+          side = "LEFT"
+        else
+          side = "RIGHT"
+        end
+      end
+    end
+  end
+
+  if side == "LEFT" then
+    b:SetPoint("RIGHT", f, "LEFT", -6, 0)
+  else
+    b:SetPoint("LEFT", f, "RIGHT", 6, 0)
+  end
+end
+
+local function UpdateValentineButton(now)
+  if not clockFrame or not clockFrame.valentineButton then return end
+
+  now = tonumber(now) or (type(time) == "function" and time() or 0)
+  if clockFrame._valentineNextCheck and now < clockFrame._valentineNextCheck then
+    return
+  end
+  clockFrame._valentineNextCheck = now + 15
+
+  PositionValentineButton(clockFrame)
+
+  if not (DB and DB.enabled) then
+    clockFrame.valentineButton:Hide()
+    return
+  end
+
+  -- Only show during the holiday (calendar) AND when the daily reward is still available.
+  local active = IsLoveIsInTheAirActiveToday()
+  if active == nil then
+    -- Fallback: if we can't read calendar, treat joinable holiday dungeon as a proxy.
+    active = IsHolidayDungeonJoinable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+  end
+  if not active then
+    clockFrame.valentineButton:Hide()
+    return
+  end
+
+  local joinable = IsHolidayDungeonJoinable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+  if joinable == false then
+    clockFrame.valentineButton:Hide()
+    return
+  end
+
+  if IsHolidayRewardAvailable(LOVE_IS_IN_THE_AIR_DUNGEON_ID) then
+    clockFrame.valentineButton:Show()
+  else
+    clockFrame.valentineButton:Hide()
+  end
+end
 
 local ALARM_SOUND_PRESETS = {
   { key = "raidwarning", name = "Raid Warning", kit = function() return SOUNDKIT and SOUNDKIT.RAID_WARNING end },
@@ -498,6 +783,7 @@ local function ApplyPosition()
   if not clockFrame then return end
   clockFrame:ClearAllPoints()
   clockFrame:SetPoint(DB.point or "TOP", UIParent, DB.relPoint or "TOP", tonumber(DB.x) or 0, tonumber(DB.y) or 0)
+  PositionValentineButton(clockFrame)
 end
 
 local function SavePosition()
@@ -1179,6 +1465,7 @@ local function StartTicker()
     UpdateClockText()
     CheckAlarms(now)
     UpdateAlarmState(now)
+    UpdateValentineButton(now)
   end
   if C_Timer and C_Timer.NewTicker then
     ticker = C_Timer.NewTicker(interval, Tick)
@@ -1232,6 +1519,8 @@ ApplyState = function()
   clockFrame:SetScript("OnDragStop", function(self)
     if self.StopMovingOrSizing then self:StopMovingOrSizing() end
     SavePosition()
+    PositionValentineButton(self)
+    UpdateValentineButton(type(time) == "function" and time() or 0)
   end)
 
   clockFrame:SetScript("OnMouseUp", function(_, btn)
@@ -1473,6 +1762,27 @@ local function EnsureClockFrame()
   f.ampm:SetPoint("BOTTOMLEFT", f.time, "BOTTOMRIGHT", 8, 6)
   if f.ampm.SetJustifyH then f.ampm:SetJustifyH("LEFT") end
 
+  -- Holiday quick-queue: Love is in the Air (shows only when reward is available).
+  f.valentineButton = CreateFrame("Button", nil, f)
+  f.valentineButton:SetSize(26, 26)
+  f.valentineButton:Hide()
+  f.valentineButton.icon = f.valentineButton:CreateTexture(nil, "ARTWORK")
+  f.valentineButton.icon:SetAllPoints()
+  f.valentineButton.icon:SetTexture(LOVE_IS_IN_THE_AIR_ICON_FILE_ID)
+  f.valentineButton:SetScript("OnClick", function()
+    if InCombatLockdown and InCombatLockdown() then
+      Print("Can't queue while in combat.")
+      return
+    end
+    local ok = TryQueueHolidayDungeon(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+    if not ok then
+      local toggle = _G and rawget(_G, "PVEFrame_ToggleFrame")
+      if type(toggle) == "function" then
+        pcall(toggle)
+      end
+    end
+  end)
+
   f:SetClampedToScreen(true)
 
   local function ApplyTooltipBorderless(enable)
@@ -1697,6 +2007,8 @@ local function EnsureClockFrame()
   end)
 
   clockFrame = f
+  PositionValentineButton(clockFrame)
+  UpdateValentineButton(type(time) == "function" and time() or 0)
   ApplyFonts()
   ApplyPosition()
   ApplyLayout()
@@ -2078,8 +2390,49 @@ local function EnsureOptionsFrame()
   end)
   f.tipWidth:SetWidth(280)
 
+  local valLabel = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  valLabel:SetPoint("TOPLEFT", 16, -410)
+  valLabel:SetText("Valentine pop-out")
+
+  local function SetValentineSide(side)
+    DB.valentineSide = tostring(side or "AUTO"):upper()
+    if f.valSideAuto then f.valSideAuto:SetChecked(DB.valentineSide == "AUTO") end
+    if f.valSideLeft then f.valSideLeft:SetChecked(DB.valentineSide == "LEFT") end
+    if f.valSideRight then f.valSideRight:SetChecked(DB.valentineSide == "RIGHT") end
+    PositionValentineButton(clockFrame)
+    UpdateValentineButton(type(time) == "function" and time() or 0)
+  end
+
+  f.valSideAuto = CreateCheck("Auto", 16, -426, function(self)
+    if self:GetChecked() then
+      SetValentineSide("AUTO")
+    else
+      if not ((f.valSideLeft and f.valSideLeft:GetChecked()) or (f.valSideRight and f.valSideRight:GetChecked())) then
+        self:SetChecked(true)
+      end
+    end
+  end)
+  f.valSideLeft = CreateCheck("Left", 90, -426, function(self)
+    if self:GetChecked() then
+      SetValentineSide("LEFT")
+    else
+      if not ((f.valSideAuto and f.valSideAuto:GetChecked()) or (f.valSideRight and f.valSideRight:GetChecked())) then
+        self:SetChecked(true)
+      end
+    end
+  end)
+  f.valSideRight = CreateCheck("Right", 160, -426, function(self)
+    if self:GetChecked() then
+      SetValentineSide("RIGHT")
+    else
+      if not ((f.valSideAuto and f.valSideAuto:GetChecked()) or (f.valSideLeft and f.valSideLeft:GetChecked())) then
+        self:SetChecked(true)
+      end
+    end
+  end)
+
   local fontLabel = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  fontLabel:SetPoint("TOPLEFT", 16, -434)
+  fontLabel:SetPoint("TOPLEFT", 16, -466)
   fontLabel:SetText("Font")
 
   local function GetAceGUI()
@@ -2090,7 +2443,7 @@ local function EnsureOptionsFrame()
 
   f.fontPreset = CreateFrame("Button", nil, f.panelGeneral, "UIPanelButtonTemplate")
   f.fontPreset:SetSize(160, 20)
-  f.fontPreset:SetPoint("TOPLEFT", 16, -450)
+  f.fontPreset:SetPoint("TOPLEFT", 16, -482)
   f.fontPreset:SetText("Choose preset")
 
   local function GetFontPresetEntries()
@@ -3385,6 +3738,12 @@ local function EnsureOptionsFrame()
     f.tipLeft:SetChecked(tostring(DB.tooltipSide or "RIGHT"):upper() == "LEFT")
     f.tipOffset:SetValue(ClampNum(tonumber(DB.tooltipOffset), 0, 80))
     if f.tipWidth then f.tipWidth:SetValue(ClampNum(tonumber(DB.tooltipWidth), 160, 420)) end
+    do
+      local v = tostring(DB.valentineSide or "AUTO"):upper()
+      if f.valSideAuto then f.valSideAuto:SetChecked(v == "AUTO") end
+      if f.valSideLeft then f.valSideLeft:SetChecked(v == "LEFT") end
+      if f.valSideRight then f.valSideRight:SetChecked(v == "RIGHT") end
+    end
     do
       if f.TryInitAceFontDropdown then
         f:TryInitAceFontDropdown()
