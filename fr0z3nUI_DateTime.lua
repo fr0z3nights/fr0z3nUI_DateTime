@@ -1844,6 +1844,11 @@ local function EnsureClockFrame()
       return
     end
     local ok = TryQueueHolidayDungeon(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+    if ok then
+      Print("Queued: Love is in the Air")
+    else
+      Print("Queue attempt blocked; open LFD UI and click Find Group.")
+    end
     if not ok then
       local toggle = _G and rawget(_G, "PVEFrame_ToggleFrame")
       if type(toggle) == "function" then
