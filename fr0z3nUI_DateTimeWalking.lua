@@ -31,14 +31,14 @@ end
 
 TW.LABELS = TW.LABELS or {
   classic = "Classic",
-  tbc = "TBC",
+  tbc = "Outland",
   wrath = "Wrath",
   cata = "Cata",
-  mop = "MoP",
-  wod = "WoD",
+  mop = "Mists",
+  wod = "Warlords",
   legion = "Legion",
-  bfa = "BFA",
-  shadowlands = "SL",
+  bfa = "Battle",
+  shadowlands = "Shadows",
 }
 
 -- Stable IDs (from EventQ); Shadowlands intentionally omitted until confirmed.
