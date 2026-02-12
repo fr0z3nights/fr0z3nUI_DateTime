@@ -2941,9 +2941,19 @@ local function EnsureOptionsFrame()
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
   end)
 
+  local reloadBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  reloadBtn:SetSize(90, 22)
+  reloadBtn:SetPoint("BOTTOMRIGHT", -12, 12)
+  reloadBtn:SetText("Reload UI")
+  reloadBtn:SetScript("OnClick", function()
+    local r = _G and _G["ReloadUI"]
+    if r then r() end
+  end)
+  f._reloadBtn = reloadBtn
+
   local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   close:SetSize(90, 22)
-  close:SetPoint("BOTTOMRIGHT", -12, 12)
+  close:SetPoint("RIGHT", reloadBtn, "LEFT", -6, 0)
   close:SetText("Close")
   close:SetScript("OnClick", function() f:Hide() end)
 
