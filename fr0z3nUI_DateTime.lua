@@ -317,6 +317,9 @@ local function IsLoveIsInTheAirActiveToday()
     return clockFrame._valentineActive
   end
 
+  -- Calendar APIs can appear available but return empty data until Blizzard_Calendar
+  -- is loaded and the calendar has been opened at least once.
+  TryLoadAddOnQuiet("Blizzard_Calendar")
   if C_Calendar and C_Calendar.OpenCalendar then
     pcall(C_Calendar.OpenCalendar)
   end
@@ -344,7 +347,17 @@ local function IsLoveIsInTheAirActiveToday()
 
   local okNum, n = pcall(C_Calendar.GetNumDayEvents, 0, today)
   n = okNum and tonumber(n) or 0
+  if not okNum or not n or n <= 0 then
+    if clockFrame then
+      clockFrame._valentineStamp = stamp
+      clockFrame._valentineActive = nil
+    end
+    return nil
+  end
+
   local active = false
+  local sawHolidayEvent = false
+  local sawHolidayInfo = false
 
   for i = 1, n do
     local okEv, ev = pcall(C_Calendar.GetDayEvent, 0, today, i)
@@ -366,8 +379,10 @@ local function IsLoveIsInTheAirActiveToday()
       end
 
       if isHoliday and C_Calendar.GetHolidayInfo then
+        sawHolidayEvent = true
         local okH, info = pcall(C_Calendar.GetHolidayInfo, 0, today, i)
         if okH and type(info) == "table" then
+          sawHolidayInfo = true
           local name = tostring(rawget(info, "name") or "")
           local desc = tostring(rawget(info, "description") or "")
           local hay = (name .. "\n" .. desc):lower()
@@ -378,6 +393,16 @@ local function IsLoveIsInTheAirActiveToday()
         end
       end
     end
+  end
+
+  -- If we didn't see any holiday rows (or couldn't fetch holiday info), treat the
+  -- calendar result as not-yet-populated so callers can use LFG joinable as a proxy.
+  if not sawHolidayEvent or not sawHolidayInfo then
+    if clockFrame then
+      clockFrame._valentineStamp = stamp
+      clockFrame._valentineActive = nil
+    end
+    return nil
   end
 
   if clockFrame then
@@ -2106,8 +2131,9 @@ local function EnsureOptionsFrame()
     if not exists and tinsert then tinsert(UISpecialFrames, name) end
   end
 
-  -- Slightly taller so bottom controls don't overlap the last section.
-  f:SetSize(330, 820)
+  -- Slightly wider so bottom controls don't overlap (and a bit taller so bottom controls
+  -- don't overlap the last section).
+  f:SetSize(440, 820)
   f:ClearAllPoints()
   f:SetPoint("CENTER", UIParent, "CENTER", tonumber(DB and DB.optionsX) or 0, tonumber(DB and DB.optionsY) or 0)
   f:SetFrameStrata("DIALOG")
@@ -2956,6 +2982,34 @@ local function EnsureOptionsFrame()
   close:SetPoint("RIGHT", reloadBtn, "LEFT", -6, 0)
   close:SetText("Close")
   close:SetScript("OnClick", function() f:Hide() end)
+
+  -- Lay out the 4 bottom buttons evenly across the available width.
+  do
+    local function LayoutBottomButtons()
+      local pad = 12
+      local buttonW = 90
+      local w = (f.GetWidth and f:GetWidth()) or 440
+      local inner = w - (pad * 2)
+      local totalButtons = buttonW * 4
+      local gap = math.floor(((inner - totalButtons) / 3) + 0.5)
+      if gap < 6 then gap = 6 end
+
+      reset:ClearAllPoints()
+      centerWin:ClearAllPoints()
+      close:ClearAllPoints()
+      reloadBtn:ClearAllPoints()
+
+      reset:SetPoint("BOTTOMLEFT", pad, 12)
+      centerWin:SetPoint("BOTTOMLEFT", pad + (buttonW + gap) * 1, 12)
+      close:SetPoint("BOTTOMLEFT", pad + (buttonW + gap) * 2, 12)
+      reloadBtn:SetPoint("BOTTOMLEFT", pad + (buttonW + gap) * 3, 12)
+    end
+
+    LayoutBottomButtons()
+    if f.HookScript then
+      f:HookScript("OnShow", LayoutBottomButtons)
+    end
+  end
 
   -- Style tab
   do
@@ -3946,6 +4000,32 @@ local function HandleSlash(msg)
     return
   end
 
+  if msg == "val" or msg == "valentine" then
+    EnsureClockFrame()
+    local now = type(time) == "function" and time() or 0
+    UpdateValentineButton(now, true)
+
+    local activeCal = IsLoveIsInTheAirActiveToday()
+    local joinable = IsHolidayDungeonJoinable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+    local rewardAvail, uncertain = IsHolidayRewardAvailable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+    local shown = (clockFrame and clockFrame.valentineButton and clockFrame.valentineButton.IsShown and clockFrame.valentineButton:IsShown()) and true or false
+
+    Print("Valentine debug:")
+    Print("  enabled=" .. tostring(DB and DB.enabled and true or false)
+      .. " activeCal=" .. tostring(activeCal)
+      .. " joinable=" .. tostring(joinable)
+      .. " reward=" .. tostring(rewardAvail)
+      .. " uncertain=" .. tostring(uncertain)
+      .. " shown=" .. tostring(shown))
+    if clockFrame then
+      Print("  cache stamp=" .. tostring(clockFrame._valentineStamp)
+        .. " cachedActive=" .. tostring(clockFrame._valentineActive)
+        .. " nextCheck=" .. tostring(clockFrame._valentineNextCheck)
+        .. " retryAt=" .. tostring(clockFrame._valentineRetryAt))
+    end
+    return
+  end
+
   if msg == "debugfont" then
     EnsureFontLibsLoaded()
     ApplyFonts()
@@ -4147,6 +4227,7 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CHAT_MSG_LOOT")
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("CALENDAR_UPDATE_EVENT_LIST")
 eventFrame:RegisterEvent("LFG_LOCK_INFO_RECEIVED")
 eventFrame:RegisterEvent("LFG_UPDATE")
 eventFrame:RegisterEvent("LFG_UPDATE_RANDOM_INFO")
@@ -4176,6 +4257,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
   end
 
   if event == "PLAYER_ENTERING_WORLD"
+    or event == "CALENDAR_UPDATE_EVENT_LIST"
     or event == "LFG_LOCK_INFO_RECEIVED"
     or event == "LFG_UPDATE"
     or event == "LFG_UPDATE_RANDOM_INFO"
