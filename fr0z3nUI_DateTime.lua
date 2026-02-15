@@ -710,7 +710,6 @@ local FONT_PRESETS = {
   { key = "morpheus", name = "Morpheus", path = "Fonts\\MORPHEUS.TTF" },
   { key = "skurri", name = "Skurri", path = "Fonts\\SKURRI.TTF" },
   { key = "bazooka", name = "Bazooka (addon)", path = "Interface\\AddOns\\fr0z3nUI_DateTime\\media\\Bazooka.ttf" },
-  { key = "custom", name = "Custom path", path = "" },
 }
 
 local function CopyDefaults(dst, src)
@@ -736,6 +735,12 @@ local function EnsureDB()
   -- Back-compat: remove deprecated LibSharedMedia preset if a user had it saved.
   if tostring(DB.fontPreset or "") == "lsm" then
     DB.fontPreset = "bazooka"
+  end
+
+  -- Back-compat: custom font path preset removed; fall back safely.
+  if tostring(DB.fontPreset or "") == "custom" then
+    DB.fontPreset = "default"
+    DB.fontPath = ""
   end
 
   -- Ensure tooltip order is valid.
@@ -1710,11 +1715,6 @@ local function ApplyFonts()
     AddCandidate("Interface\\AddOns\\fr0z3nUI_DateTime\\media\\bazooka.ttf")
 
     font = ResolveFirstWorkingFont(candidates)
-  elseif presetKey == "custom" then
-    local p = tostring(DB.fontPath or "")
-    if p ~= "" then
-      font = ResolveFirstWorkingFont({ p }) or p
-    end
   elseif lsmName then
     EnsureFontLibsLoaded()
 
@@ -2119,7 +2119,38 @@ end
 local function EnsureOptionsFrame()
   if optionsFrame then return optionsFrame end
 
-  local f = CreateFrame("Frame", "fr0z3nUI_DateTimeOptions", UIParent, "BasicFrameTemplateWithInset")
+  local f = CreateFrame("Frame", "fr0z3nUI_DateTimeOptions", UIParent, "BackdropTemplate")
+
+  do
+    -- Match FGO styling: simple tooltip background + top tab bar.
+    f:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      tile = true,
+      tileSize = 16,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.85)
+
+    local tabBarBG = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    tabBarBG:SetPoint("TOPLEFT", f, "TOPLEFT", 4, -4)
+    tabBarBG:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+    tabBarBG:SetHeight(26)
+    tabBarBG:SetBackdrop({
+      bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+      tile = true,
+      tileSize = 16,
+      insets = { left = 0, right = 0, top = 0, bottom = 0 },
+    })
+    tabBarBG:SetBackdropColor(0, 0, 0, 0.92)
+    tabBarBG:SetFrameLevel((f.GetFrameLevel and f:GetFrameLevel() or 0) + 1)
+    f._tabBarBG = tabBarBG
+
+    local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
+    closeBtn:SetFrameLevel((f.GetFrameLevel and f:GetFrameLevel() or 0) + 20)
+    closeBtn:SetScript("OnClick", function() if f and f.Hide then f:Hide() end end)
+    f._closeBtn = closeBtn
+  end
 
   -- Allow closing with Escape.
   if type(UISpecialFrames) == "table" then
@@ -2168,8 +2199,65 @@ local function EnsureOptionsFrame()
   f.panelAlarms:Hide()
 
   f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  f.title:SetPoint("TOPLEFT", 12, -10)
-  f.title:SetText("|cff00ccff[FDT]|r DateTime")
+  f.title:SetJustifyH("LEFT")
+  f.title:SetText("|cff00ccff[FDT]|r")
+  do
+    local fontPath, fontSize, fontFlags = f.title:GetFont()
+    if fontPath and fontSize then
+      f.title:SetFont(fontPath, fontSize + 2, fontFlags)
+    end
+  end
+
+  -- Keep the title above the tab bar background.
+  if f._tabBarBG and f.title and f.title.SetParent then
+    f.title:SetParent(f._tabBarBG)
+    f.title:ClearAllPoints()
+    f.title:SetPoint("LEFT", f._tabBarBG, "LEFT", 8, 0)
+  else
+    f.title:SetPoint("TOPLEFT", 12, -6)
+  end
+
+  local TAB_COUNT = 3
+  local TAB_OVERLAP_X = -6
+
+  local function SizeTabToText(btn, pad, minW)
+    if not (btn and btn.GetFontString and btn.SetWidth) then return end
+    local fs = btn:GetFontString()
+    local w = (fs and fs.GetStringWidth and fs:GetStringWidth()) or 0
+    w = (tonumber(w) or 0) + (tonumber(pad) or 18)
+    if minW and w < minW then w = minW end
+    btn:SetWidth(w)
+  end
+
+  local function StyleTab(btn, active)
+    if not (btn and btn.GetFontString) then return end
+    local fs = btn:GetFontString()
+    if fs and fs.SetTextColor then
+      if active then
+        fs:SetTextColor(1.0, 0.82, 0.0, 1)
+      else
+        fs:SetTextColor(0.70, 0.70, 0.70, 1)
+      end
+    end
+  end
+
+  local function UpdateTabZOrder(activeIndex)
+    local base = (f.GetFrameLevel and f:GetFrameLevel()) or 0
+    base = base + 20
+    for i = 1, TAB_COUNT do
+      local t = f["tab" .. tostring(i)]
+      if t and t.SetFrameLevel then
+        t:SetFrameLevel(base + (TAB_COUNT - i))
+      end
+    end
+    local a = tonumber(activeIndex)
+    if a and a >= 1 and a <= TAB_COUNT then
+      local t = f["tab" .. tostring(a)]
+      if t and t.SetFrameLevel then
+        t:SetFrameLevel(base + TAB_COUNT + 5)
+      end
+    end
+  end
 
   local function SelectTab(which)
     which = tostring(which or "general"):lower()
@@ -2188,28 +2276,38 @@ local function EnsureOptionsFrame()
       f.panelStyle:Hide()
       f.panelGeneral:Show()
     end
-    if f.tabGeneral then f.tabGeneral:SetEnabled(which ~= "general") end
-    if f.tabStyle then f.tabStyle:SetEnabled(which ~= "style") end
-    if f.tabAlarms then f.tabAlarms:SetEnabled(which ~= "alarms") end
+    StyleTab(f.tabGeneral, which == "general")
+    StyleTab(f.tabStyle, which == "style")
+    StyleTab(f.tabAlarms, which == "alarms")
+    UpdateTabZOrder((which == "general") and 1 or ((which == "style") and 2 or 3))
   end
 
   f.tabGeneral = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.tabGeneral:SetSize(60, 20)
-  f.tabGeneral:SetPoint("TOPLEFT", f.title, "TOPRIGHT", 10, 2)
+  f.tabGeneral:SetID(1)
+  f.tabGeneral:SetHeight(22)
+  f.tabGeneral:SetPoint("LEFT", f.title, "RIGHT", 10, 0)
   f.tabGeneral:SetText("General")
   f.tabGeneral:SetScript("OnClick", function() SelectTab("general") end)
+  SizeTabToText(f.tabGeneral, 18, 70)
+  f.tab1 = f.tabGeneral
 
   f.tabStyle = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.tabStyle:SetSize(60, 20)
-  f.tabStyle:SetPoint("LEFT", f.tabGeneral, "RIGHT", 6, 0)
+  f.tabStyle:SetID(2)
+  f.tabStyle:SetHeight(22)
+  f.tabStyle:SetPoint("LEFT", f.tabGeneral, "RIGHT", TAB_OVERLAP_X, 0)
   f.tabStyle:SetText("Style")
   f.tabStyle:SetScript("OnClick", function() SelectTab("style") end)
+  SizeTabToText(f.tabStyle, 18, 70)
+  f.tab2 = f.tabStyle
 
   f.tabAlarms = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.tabAlarms:SetSize(60, 20)
-  f.tabAlarms:SetPoint("LEFT", f.tabStyle, "RIGHT", 6, 0)
+  f.tabAlarms:SetID(3)
+  f.tabAlarms:SetHeight(22)
+  f.tabAlarms:SetPoint("LEFT", f.tabStyle, "RIGHT", TAB_OVERLAP_X, 0)
   f.tabAlarms:SetText("Alarms")
   f.tabAlarms:SetScript("OnClick", function() SelectTab("alarms") end)
+  SizeTabToText(f.tabAlarms, 18, 70)
+  f.tab3 = f.tabAlarms
 
   local sliderIndex = 0
 
@@ -2631,11 +2729,7 @@ local function EnsureOptionsFrame()
           end
         end
 
-        if key ~= "custom" then
-          DB.fontPath = ""
-          if self.fontPath then self.fontPath:SetText("") end
-        end
-        if self._UpdateFontPathUI then self:_UpdateFontPathUI() end
+        DB.fontPath = ""
         ApplyFonts()
         ApplyState()
         if self.Refresh then self:Refresh() end
@@ -2658,58 +2752,7 @@ local function EnsureOptionsFrame()
     end)
   end
 
-  f.fontPath = CreateFrame("EditBox", nil, f.panelGeneral, "InputBoxTemplate")
-  f.fontPath:SetSize(240, 20)
-  f.fontPath:SetPoint("TOPLEFT", 16, -474)
-  f.fontPath:SetAutoFocus(false)
-  local function CommitCustomFontPath(self)
-    if tostring(DB.fontPreset or "") ~= "custom" then
-      return
-    end
-    DB.fontPreset = "custom"
-    DB.fontPath = tostring(self:GetText() or "")
-    ApplyFonts()
-    ApplyState()
-  end
-
-  f.fontPath:SetScript("OnEnterPressed", function(self)
-    CommitCustomFontPath(self)
-    self:ClearFocus()
-  end)
-  f.fontPath:SetScript("OnEditFocusLost", function(self)
-    CommitCustomFontPath(self)
-  end)
-  f.fontPath:SetScript("OnEscapePressed", function(self)
-    if tostring(DB.fontPreset or "") == "custom" then
-      self:SetText(tostring(DB.fontPath or ""))
-    else
-      self:SetText("")
-    end
-    self:ClearFocus()
-  end)
-
-  f.fontHint = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  f.fontHint:SetPoint("TOPLEFT", 16, -494)
-  f.fontHint:SetText("Custom: set a path like Fonts\\FRIZQT__.TTF (Enter or click-away)")
-
-  function f:_UpdateFontPathUI()
-    local isCustom = (tostring(DB.fontPreset or "") == "custom")
-    if isCustom then
-      if f.fontPath.EnableMouse then f.fontPath:EnableMouse(true) end
-      if f.fontPath.SetTextColor then f.fontPath:SetTextColor(1, 1, 1, 1) end
-      if f.fontHint and f.fontHint.SetText then
-        f.fontHint:SetText("Custom: set a path like Fonts\\FRIZQT__.TTF (Enter or click-away)")
-      end
-    else
-      if f.fontPath.EnableMouse then f.fontPath:EnableMouse(false) end
-      if f.fontPath.ClearFocus then f.fontPath:ClearFocus() end
-      if f.fontPath.SetTextColor then f.fontPath:SetTextColor(0.6, 0.6, 0.6, 1) end
-      if f.fontPath.SetText then f.fontPath:SetText("") end
-      if f.fontHint and f.fontHint.SetText then
-        f.fontHint:SetText("Custom path disabled (choose 'Custom path' preset)")
-      end
-    end
-  end
+  -- Custom font path input removed.
 
   if not f._aceFontPreset then
     do
@@ -2728,11 +2771,7 @@ local function EnsureOptionsFrame()
             end
           end
 
-          if presetKey ~= "custom" then
-            DB.fontPath = ""
-            if f.fontPath then f.fontPath:SetText("") end
-          end
-          if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
+          DB.fontPath = ""
           ApplyFonts()
           ApplyState()
           if f.Refresh then f:Refresh() end
@@ -2819,43 +2858,8 @@ local function EnsureOptionsFrame()
   end)
   f.ampmSize:SetWidth(280)
 
-  local labels = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  labels:SetPoint("TOPLEFT", 16, -644)
-  labels:SetText("Tooltip labels")
-
-  local function LabelBox(title, x, y, key)
-    local t = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    t:SetPoint("TOPLEFT", x, y)
-    t:SetText(title)
-
-    local eb = CreateFrame("EditBox", nil, f.panelGeneral, "InputBoxTemplate")
-    eb:SetSize(90, 20)
-    eb:SetPoint("TOPLEFT", x, y - 14)
-    eb:SetAutoFocus(false)
-    local function CommitLabel(self)
-      DB.labels = DB.labels or {}
-      DB.labels[key] = tostring(self:GetText() or "")
-    end
-    eb:SetScript("OnEnterPressed", function(self)
-      CommitLabel(self)
-      self:ClearFocus()
-    end)
-    eb:SetScript("OnEditFocusLost", function(self)
-      CommitLabel(self)
-    end)
-    eb:SetScript("OnEscapePressed", function(self)
-      self:SetText(GetLabel(key, title))
-      self:ClearFocus()
-    end)
-    return eb
-  end
-
-  f.labelRealm = LabelBox("Realm", 16, -660, "realm")
-  f.labelDaily = LabelBox("Daily", 120, -660, "daily")
-  f.labelWeekly = LabelBox("Weekly", 224, -660, "weekly")
-
   local extraTitle = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  extraTitle:SetPoint("TOPLEFT", 16, -696)
+  extraTitle:SetPoint("TOPLEFT", 16, -644)
   extraTitle:SetText("Extra clocks (tooltip)")
 
   f.extraRows = {}
@@ -2870,7 +2874,7 @@ local function EnsureOptionsFrame()
       if not row then
         row = CreateFrame("Frame", nil, f.panelGeneral)
         row:SetSize(300, 20)
-        row:SetPoint("TOPLEFT", 16, -712 - (i - 1) * 22)
+        row:SetPoint("TOPLEFT", 16, -660 - (i - 1) * 22)
 
         row.enable = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
         row.enable:SetPoint("LEFT", 0, 0)
@@ -3902,16 +3906,10 @@ local function EnsureOptionsFrame()
         f.fontPreset:SetText("Preset: " .. disp)
       end
     end
-    if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
-    if tostring(DB.fontPreset or "") == "custom" then
-      f.fontPath:SetText(tostring(DB.fontPath or ""))
-    end
+    -- Custom font path UI removed.
     f.timeSize:SetValue(ClampNum(tonumber(DB.timeSize), 16, 72))
     f.smallSize:SetValue(ClampNum(tonumber(DB.daySize), 8, 24))
     if f.ampmSize then f.ampmSize:SetValue(ClampNum(tonumber(DB.ampmSize), 8, 36)) end
-    if f.labelRealm then f.labelRealm:SetText(GetLabel("realm", "Realm")) end
-    if f.labelDaily then f.labelDaily:SetText(GetLabel("daily", "Daily")) end
-    if f.labelWeekly then f.labelWeekly:SetText(GetLabel("weekly", "Weekly")) end
     RefreshExtraRows()
     if f.alarmClickToStop then f.alarmClickToStop:SetChecked(DB.alarmClickToStop and true or false) end
     if f.showDay then f.showDay:SetChecked(DB.showDay ~= false) end
@@ -3928,7 +3926,6 @@ local function EnsureOptionsFrame()
   end
 
   optionsFrame = f
-  if f._UpdateFontPathUI then f:_UpdateFontPathUI() end
   SelectTab("general")
   return f
 end
