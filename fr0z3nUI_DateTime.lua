@@ -55,6 +55,7 @@ local DEFAULTS = {
   scale = 1.0,
   alpha = 1.0,
   valentineSide = "AUTO", -- AUTO | LEFT | RIGHT
+  valentineDisableInInstances = true,
   tooltipSide = "RIGHT", -- RIGHT or LEFT
   tooltipOffset = 0, -- horizontal offset from the widget edge
   tooltipYOffset = 0,
@@ -306,7 +307,17 @@ local function GetTodayStamp()
   return nil
 end
 
+local function IsInGroupInstance()
+  if type(IsInInstance) ~= "function" then return false end
+  local inInstance, instanceType = IsInInstance()
+  if not inInstance then return false end
+  return instanceType == "party" or instanceType == "raid" or instanceType == "scenario"
+end
+
 local function IsLoveIsInTheAirActiveToday()
+  if DB and DB.valentineDisableInInstances and IsInGroupInstance() then
+    return nil
+  end
   if not (C_Calendar and C_Calendar.GetNumDayEvents and C_Calendar.GetDayEvent) then
     return nil
   end
@@ -373,8 +384,13 @@ local function IsLoveIsInTheAirActiveToday()
       end
       if not isHoliday then
         local calendarType = rawget(ev, "calendarType")
-        if type(calendarType) == "string" and tostring(calendarType):lower() == "holiday" then
-          isHoliday = true
+        if type(calendarType) == "string" then
+          -- Secret strings cannot be indexed (e.g. calendarType:lower()).
+          if not (type(issecretvalue) == "function" and issecretvalue(calendarType)) then
+            if (string.lower(calendarType) == "holiday") then
+              isHoliday = true
+            end
+          end
         end
       end
 
@@ -382,13 +398,25 @@ local function IsLoveIsInTheAirActiveToday()
         sawHolidayEvent = true
         local okH, info = pcall(C_Calendar.GetHolidayInfo, 0, today, i)
         if okH and type(info) == "table" then
-          sawHolidayInfo = true
-          local name = tostring(rawget(info, "name") or "")
-          local desc = tostring(rawget(info, "description") or "")
-          local hay = (name .. "\n" .. desc):lower()
-          if hay:find("love is in the air", 1, true) then
-            active = true
-            break
+          local name = rawget(info, "name")
+          local desc = rawget(info, "description")
+
+          -- If the calendar provides secret strings, we can't safely inspect them.
+          -- Treat this as "calendar not yet readable" so callers can use a proxy.
+          if type(name) == "string" and type(issecretvalue) == "function" and issecretvalue(name) then
+            name = nil
+          end
+          if type(desc) == "string" and type(issecretvalue) == "function" and issecretvalue(desc) then
+            desc = nil
+          end
+
+          if type(name) == "string" or type(desc) == "string" then
+            sawHolidayInfo = true
+            local hay = string.lower(tostring(name or "") .. "\n" .. tostring(desc or ""))
+            if string.find(hay, "love is in the air", 1, true) then
+              active = true
+              break
+            end
           end
         end
       end
@@ -474,10 +502,14 @@ local function IsHolidayRewardAvailable(dungeonID)
           local id = tonumber(itemID) or tonumber(rewardID)
           local link = type(rewardLink) == "string" and rewardLink or ""
           local nm = type(name) == "string" and name or ""
+          if type(issecretvalue) == "function" and issecretvalue(nm) then
+            nm = ""
+          end
+          local nmLower = string.lower(nm)
           if id == HEART_SHAPED_BOX_ITEM_ID
             or link:find("item:" .. tostring(HEART_SHAPED_BOX_ITEM_ID), 1, true)
-            or (rewardType == "item" and nm:lower():find("heart%-shaped box"))
-            or nm:lower():find("heart%-shaped box")
+            or (rewardType == "item" and string.find(nmLower, "heart%-shaped box"))
+            or string.find(nmLower, "heart%-shaped box")
           then
             hasBox = true
             break
@@ -533,6 +565,17 @@ end
 
 local function UpdateValentineButton(now, force)
   if not clockFrame or not clockFrame.valentineButton then return end
+
+  -- Never show or update while in combat (also avoids potential protected UI edge cases).
+  if InCombatLockdown and InCombatLockdown() then
+    clockFrame.valentineButton:Hide()
+    return
+  end
+
+  if DB and DB.valentineDisableInInstances and IsInGroupInstance() then
+    clockFrame.valentineButton:Hide()
+    return
+  end
 
   now = tonumber(now) or (type(time) == "function" and time() or 0)
   if not force and clockFrame._valentineNextCheck and now < clockFrame._valentineNextCheck then
@@ -657,7 +700,13 @@ local function GetLSMFontNames()
 
   if #names == 0 then return nil end
   table.sort(names, function(a, b)
-    return tostring(a):lower() < tostring(b):lower()
+    local sa = tostring(a or "")
+    local sb = tostring(b or "")
+    if type(issecretvalue) == "function" then
+      if type(sa) == "string" and issecretvalue(sa) then sa = "" end
+      if type(sb) == "string" and issecretvalue(sb) then sb = "" end
+    end
+    return string.lower(sa) < string.lower(sb)
   end)
   return names
 end
@@ -2629,6 +2678,11 @@ local function EnsureOptionsFrame()
     end
   end)
 
+  f.valDisableInstances = CreateCheck("Disable in instances", 16, -446, function(self)
+    DB.valentineDisableInInstances = self:GetChecked() and true or false
+    UpdateValentineButton(type(time) == "function" and time() or 0, true)
+  end)
+
   local fontLabel = f.panelGeneral:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   fontLabel:SetPoint("TOPLEFT", 16, -466)
   fontLabel:SetText("Font")
@@ -3886,6 +3940,7 @@ local function EnsureOptionsFrame()
       if f.valSideLeft then f.valSideLeft:SetChecked(v == "LEFT") end
       if f.valSideRight then f.valSideRight:SetChecked(v == "RIGHT") end
     end
+    if f.valDisableInstances then f.valDisableInstances:SetChecked(DB.valentineDisableInInstances and true or false) end
     do
       if f.TryInitAceFontDropdown then
         f:TryInitAceFontDropdown()
@@ -3946,7 +4001,12 @@ ResetDefaults = function()
 end
 
 local function HandleSlash(msg)
-  msg = tostring(msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  if type(msg) == "string" and type(issecretvalue) == "function" and issecretvalue(msg) then
+    return
+  end
+  msg = tostring(msg or "")
+  msg = string.lower(msg)
+  msg = msg:gsub("^%s+", ""):gsub("%s+$", "")
 
   if msg == "" or msg == "help" or msg == "options" then
     local f = EnsureOptionsFrame()
@@ -4224,17 +4284,34 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CHAT_MSG_LOOT")
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("CALENDAR_UPDATE_EVENT_LIST")
 eventFrame:RegisterEvent("LFG_LOCK_INFO_RECEIVED")
 eventFrame:RegisterEvent("LFG_UPDATE")
 eventFrame:RegisterEvent("LFG_UPDATE_RANDOM_INFO")
 eventFrame:RegisterEvent("LFG_QUEUE_STATUS_UPDATE")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
+  if event == "PLAYER_REGEN_DISABLED" then
+    if clockFrame and clockFrame.valentineButton and clockFrame.valentineButton.Hide then
+      clockFrame.valentineButton:Hide()
+    end
+    return
+  end
+
+  if event == "PLAYER_REGEN_ENABLED" then
+    if DB and DB.enabled then
+      UpdateValentineButton(type(time) == "function" and time() or 0, true)
+    end
+    return
+  end
+
   if event == "CHAT_MSG_LOOT" or event == "CHAT_MSG_SYSTEM" then
     local msg = ...
+    if type(issecretvalue) == "function" and issecretvalue(msg) then return end
     if type(msg) ~= "string" or msg == "" then return end
 
-    for itemID in msg:gmatch("item:(%d+)") do
+    for itemID in string.gmatch(msg, "item:(%d+)") do
       if tonumber(itemID) == HEART_SHAPED_BOX_ITEM_ID then
         if DB and CharDB then
           local now = type(time) == "function" and time() or 0
@@ -4262,6 +4339,14 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
   then
     if DB and DB.enabled then
       UpdateValentineButton(type(time) == "function" and time() or 0, true)
+
+      -- Zone/instance state isn't always settled immediately on PLAYER_ENTERING_WORLD.
+      -- Do one short delayed re-check so the button updates as soon as you exit instances.
+      if event == "PLAYER_ENTERING_WORLD" and C_Timer and C_Timer.After then
+        C_Timer.After(1.0, function()
+          UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        end)
+      end
     end
     return
   end

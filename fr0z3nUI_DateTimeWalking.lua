@@ -54,8 +54,10 @@ TW.LFG_IDS = TW.LFG_IDS or {
   shadowlands = 3076,
 }
 
+local SafeToString, SafeLowerString
+
 function TW.GetLabel(key)
-  key = tostring(key or ""):lower()
+  key = SafeLowerString and SafeLowerString(key) or string.lower(tostring(key or ""))
   return TW.LABELS[key]
 end
 
@@ -104,12 +106,39 @@ local function GetCurrentMonthNumDays()
   return 31
 end
 
+SafeToString = function(v)
+  if v == nil then return "" end
+  if type(issecretvalue) == "function" and issecretvalue(v) then
+    return ""
+  end
+  local ok, s = pcall(tostring, v)
+  if ok and type(s) == "string" then
+    return s
+  end
+  return ""
+end
+
+SafeLowerString = function(v)
+  if v == nil then return "" end
+  if type(issecretvalue) == "function" and issecretvalue(v) then
+    return ""
+  end
+  local ok, s = pcall(string.lower, v)
+  if ok and type(s) == "string" then
+    return s
+  end
+  return SafeLowerString(SafeToString(v))
+end
+
 local function GetCalendarEventText(monthOffset, day, index)
   if not (C_Calendar and C_Calendar.GetDayEvent) then return nil end
   local ok, ev = pcall(C_Calendar.GetDayEvent, monthOffset, day, index)
   if not ok or type(ev) ~= "table" then return nil end
   local title = rawget(ev, "title")
-  if title then return tostring(title) end
+  if title then
+    local s = SafeToString(title)
+    if s ~= "" then return s end
+  end
   return nil
 end
 
@@ -126,12 +155,12 @@ local function IsHolidayDayEvent(monthOffset, day, index)
       return true
     end
   end
-  if type(eventType) == "string" and tostring(eventType):lower() == "holiday" then
+  if type(eventType) == "string" and SafeLowerString(eventType) == "holiday" then
     return true
   end
 
   local calendarType = rawget(ev, "calendarType")
-  if type(calendarType) == "string" and tostring(calendarType):lower() == "holiday" then
+  if type(calendarType) == "string" and SafeLowerString(calendarType) == "holiday" then
     return true
   end
 
@@ -148,8 +177,11 @@ local function GetCalendarHolidayText(monthOffset, day, index)
   local name = rawget(info, "name")
   local desc = rawget(info, "description")
   local out = ""
-  if name then out = out .. tostring(name) end
-  if desc then out = out .. "\n" .. tostring(desc) end
+  if name then out = out .. SafeToString(name) end
+  if desc then
+    local d = SafeToString(desc)
+    if d ~= "" then out = out .. "\n" .. d end
+  end
   if out == "" then return nil end
   return out
 end
@@ -203,15 +235,16 @@ local function DetermineActiveKeyFromCalendar()
       for i = 1, n do
         local title = GetCalendarEventText(0, day, i) or ""
         local holidayText = GetCalendarHolidayText(0, day, i) or ""
-        local hay = (title .. "\n" .. holidayText):lower()
+        local hay = string.lower(title .. "\n" .. holidayText)
 
-        if hay:find("turbulent timeways", 1, true)
-          or hay:find("timewalking", 1, true)
-          or (type(timewalkingLabel) == "string" and timewalkingLabel ~= "" and (title:find(timewalkingLabel, 1, true) or holidayText:find(timewalkingLabel, 1, true)))
+        local twLabel = SafeToString(timewalkingLabel)
+        if string.find(hay, "turbulent timeways", 1, true)
+          or string.find(hay, "timewalking", 1, true)
+          or (twLabel ~= "" and (string.find(title, twLabel, 1, true) or string.find(holidayText, twLabel, 1, true)))
         then
           for key, kws in pairs(keywordMap) do
             for _, kw in ipairs(kws) do
-              if kw ~= "" and hay:find(kw, 1, true) then
+              if kw ~= "" and string.find(hay, kw, 1, true) then
                 return key
               end
             end
@@ -236,7 +269,7 @@ local function DetermineActiveKeyFromLFGList()
   local twCount = 0
   for i = 1, (GetNumRandomDungeons() or 0) do
     local dungeonID, name = GetLFGRandomDungeonInfo(i)
-    if dungeonID and type(name) == "string" and name:lower():find("timewalking", 1, true) then
+    if dungeonID and type(name) == "string" and string.find(SafeLowerString(name), "timewalking", 1, true) then
       twCount = twCount + 1
       local key = ResolveTimewalkingKeyByDungeonID(dungeonID)
       if key and not firstKey then
@@ -266,7 +299,7 @@ local function FindJoinableTimewalkingDungeonID()
   local firstTW = nil
   for i = 1, (GetNumRandomDungeons() or 0) do
     local dungeonID, name = GetLFGRandomDungeonInfo(i)
-    if dungeonID and type(name) == "string" and name:lower():find("timewalking", 1, true) then
+    if dungeonID and type(name) == "string" and string.find(SafeLowerString(name), "timewalking", 1, true) then
       twCount = twCount + 1
       local key = ResolveTimewalkingKeyByDungeonID(dungeonID)
       if not firstTW then
@@ -301,26 +334,29 @@ local function FindTimewalkingRandomDungeonID(prefer)
   if type(GetNumRandomDungeons) ~= "function" or type(GetLFGRandomDungeonInfo) ~= "function" then
     return nil
   end
-  local preferLower = type(prefer) == "string" and prefer:lower() or nil
+  local preferLower = SafeLowerString(prefer)
+  if preferLower == "" then
+    preferLower = nil
+  end
 
   local bestId, bestName
   local fallbackId, fallbackName
   for i = 1, (GetNumRandomDungeons() or 0) do
     local dungeonID, name = GetLFGRandomDungeonInfo(i)
     if dungeonID and type(name) == "string" and name ~= "" then
-      local n = name:lower()
-      local isTW = n:find("timewalking", 1, true) ~= nil
+      local n = SafeLowerString(name)
+      local isTW = string.find(n, "timewalking", 1, true) ~= nil
       if isTW then
         if not fallbackId then
           fallbackId, fallbackName = dungeonID, name
         end
         if preferLower then
-          if n:find(preferLower, 1, true) then
+          if string.find(n, preferLower, 1, true) then
             bestId, bestName = dungeonID, name
             break
           end
           if preferLower == "wrath" or preferLower == "wotlk" then
-            if n:find("lich king", 1, true) or n:find("wotlk", 1, true) then
+            if string.find(n, "lich king", 1, true) or string.find(n, "wotlk", 1, true) then
               bestId, bestName = dungeonID, name
               break
             end
@@ -348,7 +384,7 @@ local function FindTimewalkingRandomDungeonIDByTokens(tokens)
 end
 
 local function ResolveTimewalkingDungeonID(key)
-  key = tostring(key or ""):lower()
+  key = SafeLowerString(key)
   if key == "" then return nil end
 
   local preferredID = TW.LFG_IDS[key]
@@ -479,7 +515,7 @@ function TW.TryQueueActive(openUIOnFail)
   if ok then
     local label = (key and (TW.GetLabel(key) or key)) or nil
     if label then
-      Print("Queued: Timewalking " .. tostring(label))
+		Print("Queued: Timewalking " .. SafeToString(label))
     else
       Print("Queued: Timewalking")
     end
@@ -501,7 +537,7 @@ function TW.AddEventsToTooltip(tooltip, now)
   local key = TW.GetActiveKey(now)
   if key then
     local label = TW.GetLabel(key) or key
-    lines[#lines + 1] = "Timewalking: " .. tostring(label)
+    lines[#lines + 1] = "Timewalking: " .. SafeToString(label)
   end
 
   EnsureCalendarOpened()
@@ -521,23 +557,24 @@ function TW.AddEventsToTooltip(tooltip, now)
         for i = 1, n do
           local title = GetCalendarEventText(0, day, i) or ""
           local holidayText = GetCalendarHolidayText(0, day, i) or ""
-          local hay = (title .. "\n" .. holidayText):lower()
+          local hay = string.lower(title .. "\n" .. holidayText)
 
           local isRelevant = false
-          if hay:find("turbulent timeways", 1, true) or hay:find("timewalking", 1, true) then
+          if string.find(hay, "turbulent timeways", 1, true) or string.find(hay, "timewalking", 1, true) then
             isRelevant = true
-          elseif holidayText ~= "" then
+          elseif string.len(holidayText) > 0 then
             isRelevant = true
           end
 
           if isRelevant then
             local line = title
-            if line == "" and holidayText ~= "" then
-              line = tostring(holidayText):match("^([^\n]+)") or ""
+            if string.len(line) == 0 and string.len(holidayText) > 0 then
+              line = string.match(holidayText, "^([^\n]+)") or ""
             end
-            line = tostring(line or "")
-            line = line:gsub("^%s+", ""):gsub("%s+$", "")
-            if line ~= "" and not seen[line] then
+            line = SafeToString(line)
+            line = string.gsub(line, "^%s+", "")
+            line = string.gsub(line, "%s+$", "")
+            if string.len(line) > 0 and not seen[line] then
               seen[line] = true
               lines[#lines + 1] = line
             end
@@ -571,7 +608,7 @@ function TW.PrintTimewalkingDungeonList()
   for i = 1, (GetNumRandomDungeons() or 0) do
     local dungeonID, name = GetLFGRandomDungeonInfo(i)
     if dungeonID and type(name) == "string" then
-      if name:lower():find("timewalking", 1, true) then
+      if string.find(SafeLowerString(name), "timewalking", 1, true) then
         rows[#rows + 1] = { id = dungeonID, name = name }
       end
     end
@@ -583,12 +620,12 @@ function TW.PrintTimewalkingDungeonList()
   end
 
   table.sort(rows, function(a, b)
-    return tostring(a.name):lower() < tostring(b.name):lower()
+    return SafeLowerString(a.name) < SafeLowerString(b.name)
   end)
 
   Print("Timewalking queues (name -> dungeonID):")
   for i = 1, #rows do
-    Print("- " .. tostring(rows[i].name) .. " -> " .. tostring(rows[i].id))
+    Print("- " .. SafeToString(rows[i].name) .. " -> " .. tostring(rows[i].id))
   end
 end
 
@@ -601,8 +638,8 @@ function TW.PrintShadowlandsTimewalkingHint()
   local found = nil
   for i = 1, (GetNumRandomDungeons() or 0) do
     local dungeonID, name = GetLFGRandomDungeonInfo(i)
-    if dungeonID and type(name) == "string" and name:lower():find("timewalking", 1, true) then
-      if name:lower():find("shadowlands", 1, true) then
+    if dungeonID and type(name) == "string" and string.find(SafeLowerString(name), "timewalking", 1, true) then
+      if string.find(SafeLowerString(name), "shadowlands", 1, true) then
         found = { id = dungeonID, name = name }
         break
       end
@@ -610,7 +647,7 @@ function TW.PrintShadowlandsTimewalkingHint()
   end
 
   if found then
-    Print("Found Shadowlands Timewalking: " .. tostring(found.name) .. " -> " .. tostring(found.id))
+    Print("Found Shadowlands Timewalking: " .. SafeToString(found.name) .. " -> " .. tostring(found.id))
   else
     Print("No Shadowlands Timewalking entry found right now.")
     local known = TW.LFG_IDS and TW.LFG_IDS.shadowlands

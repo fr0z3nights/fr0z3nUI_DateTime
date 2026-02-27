@@ -9,6 +9,9 @@
     "table": true
   },
   "workspace.checkThirdParty": false,
+  "workspace.library": [
+    "../_LuaStubs"
+  ],
   "workspace.ignoreDir": [
     "Libs",
     "Libs/**",
