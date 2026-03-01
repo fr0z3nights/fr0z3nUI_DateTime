@@ -20,6 +20,7 @@ local CloseDropDownMenus = _G and rawget(_G, "CloseDropDownMenus")
 local ColorPickerFrame = _G and rawget(_G, "ColorPickerFrame")
 
 local PREFIX = "|cff00ccff[FDT]|r "
+local SANITY_VERSION = "260301-001"
 local function Print(msg)
   if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
     DEFAULT_CHAT_FRAME:AddMessage(PREFIX .. tostring(msg or ""))
@@ -4012,6 +4013,23 @@ local function HandleSlash(msg)
     local f = EnsureOptionsFrame()
     f:Refresh()
     f:Show()
+    return
+  end
+
+  if msg == "version" or msg == "ver" then
+    Print("Sanity: " .. tostring(SANITY_VERSION))
+
+    if type(GetAddOnMetadata) == "function" then
+      local ok, v = pcall(GetAddOnMetadata, ADDON, "Version")
+      if ok then
+        Print("Addon Version: " .. tostring(v or "?"))
+      end
+    end
+
+    if type(GetBuildInfo) == "function" then
+      local toc = select(4, GetBuildInfo())
+      Print("Client Interface: " .. tostring(toc or "?"))
+    end
     return
   end
 

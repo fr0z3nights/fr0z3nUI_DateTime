@@ -19,7 +19,7 @@
     "**/Libs/**"
   ],
   "type.weakUnionCheck": true,
-  "diagnostics.neededFileStatus": "Opened",
+  "diagnostics.neededFileStatus": "Any",
   "diagnostics.disable": [
     "invisible"
   ]

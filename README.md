@@ -10,6 +10,7 @@ Movable date/time display with an options UI and a few convenience commands.
 ## Slash Commands
 - `/fdt` — open options
 - `/fdt help` — same as `/fdt`
+- `/fdt version` — print addon version + client Interface number (sanity)
 
 ### State / formatting
 - `/fdt toggle` — enable/disable
@@ -36,3 +37,8 @@ Movable date/time display with an options UI and a few convenience commands.
 
 ## Dependencies
 - Optional: `Ace3`, `LibSharedMedia-3.0` (bundled fallbacks included).
+
+### Libs note
+- This addon includes embedded fallback copies of `Ace3` and `LibSharedMedia-3.0` under `Libs/`.
+- `OptionalDeps` just tells WoW to load standalone copies first if you have them installed; the embedded copies are still listed in the `.toc` so the addon remains self-contained.
+- If you’re unsure what actually loaded in-game, `/fdt debuglibs` prints the detected lib load status.
