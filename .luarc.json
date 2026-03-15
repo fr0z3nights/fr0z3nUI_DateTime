@@ -16,11 +16,16 @@
     "Libs",
     "Libs/**",
     "**/Libs",
-    "**/Libs/**"
+    "**/Libs/**",
+    "z Backup",
+    "z Library",
+    "zz Archive (DONT TOUCH)"
   ],
   "type.weakUnionCheck": true,
   "diagnostics.neededFileStatus": "Any",
   "diagnostics.disable": [
-    "invisible"
+    "invisible",
+    "undefined-global",
+    "undefined-field"
   ]
 }

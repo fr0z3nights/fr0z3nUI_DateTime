@@ -1,7 +1,4 @@
 {
-  "Lua": {
-    "diagnostics": {
-      "enable": false
-    }
-  }
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "diagnostics.enable": false
 }
