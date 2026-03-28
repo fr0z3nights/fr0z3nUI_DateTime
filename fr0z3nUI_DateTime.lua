@@ -37,10 +37,6 @@ local function Clamp(n, minV, maxV)
   return n
 end
 
----@param n number|nil
----@param minV number
----@param maxV number
----@return number
 local function ClampNum(n, minV, maxV)
   if n == nil then return minV end
   if n < minV then return minV end
@@ -2714,7 +2710,6 @@ local function EnsureOptionsFrame()
   end
 
   local function UpdateAceFontDropdownList()
-    ---@type any
     local w = f._aceFontPreset
     if not (w and w.SetList) then return end
     local list = {}
@@ -2737,7 +2732,6 @@ local function EnsureOptionsFrame()
     end
 
     local ok, widget = pcall(AceGUI.Create, AceGUI, "Dropdown")
-    ---@type any
     local w = widget
     if not (ok and w and w.frame) then
       self._aceFontInitError = "AceGUI.Create('Dropdown') failed"
@@ -3953,7 +3947,6 @@ local function EnsureOptionsFrame()
       if lsmName then
         disp = "LSM: " .. lsmName
       end
-      ---@type any
       local w = f._aceFontPreset
       if w and w.SetValue then
         w:SetValue(key)
