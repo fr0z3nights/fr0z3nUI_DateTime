@@ -1684,6 +1684,16 @@ ApplyState = function()
     end
 
     if btn ~= "RightButton" then return end
+    if (IsControlKeyDown and IsControlKeyDown()) and (IsShiftKeyDown and IsShiftKeyDown()) then
+      local tw = ns and ns.Timewalking
+      if tw and type(tw.RefreshEvents) == "function" then
+        tw.RefreshEvents()
+        UpdateClockText()
+        Print("Rescanned calendar and Timewalking events.")
+      end
+      return
+    end
+
     if DB and DB.locked then return end
     if optionsFrame and optionsFrame:IsShown() then
       optionsFrame:Hide()

@@ -95,6 +95,22 @@ local function GetCurrentCalendarDay()
   return nil
 end
 
+local function GetCurrentCalendarStamp()
+  if C_DateAndTime and C_DateAndTime.GetCurrentCalendarTime then
+    local ok, t = pcall(C_DateAndTime.GetCurrentCalendarTime)
+    if ok and type(t) == "table" and t.year and t.month and t.monthDay then
+      return string.format("%04d-%02d-%02d", tonumber(t.year) or 0, tonumber(t.month) or 0, tonumber(t.monthDay) or 0)
+    end
+  end
+  if C_Calendar and C_Calendar.GetDate then
+    local ok, t = pcall(C_Calendar.GetDate)
+    if ok and type(t) == "table" and t.year and t.month and t.monthDay then
+      return string.format("%04d-%02d-%02d", tonumber(t.year) or 0, tonumber(t.month) or 0, tonumber(t.monthDay) or 0)
+    end
+  end
+  return nil
+end
+
 local function GetCurrentMonthNumDays()
   if C_Calendar and C_Calendar.GetMonthInfo then
     local ok, info = pcall(C_Calendar.GetMonthInfo, 0)
@@ -186,6 +202,63 @@ local function GetCalendarHolidayText(monthOffset, day, index)
   return out
 end
 
+local function GetDayEventSafe(monthOffset, day, index)
+  if not (C_Calendar and C_Calendar.GetDayEvent) then return nil end
+  local ok, ev = pcall(C_Calendar.GetDayEvent, monthOffset, day, index)
+  if not ok or type(ev) ~= "table" then return nil end
+  return ev
+end
+
+local function CalendarTimeToEpoch(ct)
+  if type(ct) ~= "table" then return nil end
+  if not (ct.year and ct.month and ct.monthDay and ct.hour and ct.minute and ct.second) then
+    return nil
+  end
+  local ok, epoch = pcall(time, {
+    year = tonumber(ct.year) or 0,
+    month = tonumber(ct.month) or 0,
+    day = tonumber(ct.monthDay) or 0,
+    hour = tonumber(ct.hour) or 0,
+    min = tonumber(ct.minute) or 0,
+    sec = tonumber(ct.second) or 0,
+  })
+  if ok and type(epoch) == "number" then
+    return epoch
+  end
+  return nil
+end
+
+local function IsDayEventActiveNow(ev, nowEpoch)
+  if type(ev) ~= "table" then return true end
+  if nowEpoch == nil then
+    if GetServerTime then
+      nowEpoch = tonumber(GetServerTime()) or 0
+    elseif type(time) == "function" then
+      nowEpoch = tonumber(time()) or 0
+    else
+      nowEpoch = 0
+    end
+  end
+  if not nowEpoch or nowEpoch <= 0 then
+    return true
+  end
+
+  local startEpoch = CalendarTimeToEpoch(rawget(ev, "startTime"))
+  local endEpoch = CalendarTimeToEpoch(rawget(ev, "endTime"))
+
+  if startEpoch and endEpoch and startEpoch > 0 and endEpoch > 0 then
+    return (nowEpoch >= startEpoch) and (nowEpoch < endEpoch)
+  end
+  if startEpoch and startEpoch > 0 then
+    return nowEpoch >= startEpoch
+  end
+  if endEpoch and endEpoch > 0 then
+    return false
+  end
+
+  return true
+end
+
 local function DetermineActiveKeyFromCalendar()
   EnsureCalendarOpened()
   if not (C_Calendar and C_Calendar.GetNumDayEvents) then
@@ -219,6 +292,9 @@ local function DetermineActiveKeyFromCalendar()
     shadowlands = { "shadowlands" },
   }
 
+  local now = 0
+  if GetServerTime then now = tonumber(GetServerTime()) or 0 end
+
   local function ScanDays(startDay, endDay)
     startDay = ClampDay(startDay)
     endDay = ClampDay(endDay)
@@ -233,19 +309,22 @@ local function DetermineActiveKeyFromCalendar()
       local okNum, n = pcall(C_Calendar.GetNumDayEvents, 0, day)
       n = okNum and tonumber(n) or 0
       for i = 1, n do
-        local title = GetCalendarEventText(0, day, i) or ""
-        local holidayText = GetCalendarHolidayText(0, day, i) or ""
-        local hay = string.lower(title .. "\n" .. holidayText)
+        local okEvent, ev = pcall(C_Calendar.GetDayEvent, 0, day, i)
+        if okEvent and type(ev) == "table" and IsDayEventActiveNow(ev, now) then
+          local title = GetCalendarEventText(0, day, i) or ""
+          local holidayText = GetCalendarHolidayText(0, day, i) or ""
+          local hay = string.lower(title .. "\n" .. holidayText)
 
-        local twLabel = SafeToString(timewalkingLabel)
-        if string.find(hay, "turbulent timeways", 1, true)
-          or string.find(hay, "timewalking", 1, true)
-          or (twLabel ~= "" and (string.find(title, twLabel, 1, true) or string.find(holidayText, twLabel, 1, true)))
-        then
-          for key, kws in pairs(keywordMap) do
-            for _, kw in ipairs(kws) do
-              if kw ~= "" and string.find(hay, kw, 1, true) then
-                return key
+          local twLabel = SafeToString(timewalkingLabel)
+          if string.find(hay, "turbulent timeways", 1, true)
+            or string.find(hay, "timewalking", 1, true)
+            or (twLabel ~= "" and (string.find(title, twLabel, 1, true) or string.find(holidayText, twLabel, 1, true)))
+          then
+            for key, kws in pairs(keywordMap) do
+              for _, kw in ipairs(kws) do
+                if kw ~= "" and string.find(hay, kw, 1, true) then
+                  return key
+                end
               end
             end
           end
@@ -255,8 +334,8 @@ local function DetermineActiveKeyFromCalendar()
     return nil
   end
 
-  -- Prefer an event that is active today; only look ahead if nothing is active right now.
-  return ScanDays(today, today) or ScanDays(today + 1, today + 7)
+  -- Prefer an event that is actually active now today.
+  return ScanDays(today, today)
 
 end
 
@@ -319,6 +398,7 @@ local function FindJoinableTimewalkingDungeonID()
 end
 
 local _twCache = { checkedAt = 0, key = nil }
+local _tooltipEventCache = { stamp = nil, lines = nil }
 function TW.GetActiveKey(now)
   now = tonumber(now) or time()
   if (now - (_twCache.checkedAt or 0)) < 60 then
@@ -330,13 +410,21 @@ function TW.GetActiveKey(now)
   return key
 end
 
+function TW.RefreshEvents()
+  _twCache.checkedAt = 0
+  _twCache.key = nil
+  _tooltipEventCache.stamp = nil
+  _tooltipEventCache.lines = nil
+  return true
+end
+
 local function FindTimewalkingRandomDungeonID(prefer)
   if type(GetNumRandomDungeons) ~= "function" or type(GetLFGRandomDungeonInfo) ~= "function" then
     return nil
   end
   local preferLower = SafeLowerString(prefer)
   if preferLower == "" then
-    preferLower = nil
+    preferLower = false
   end
 
   local bestId, bestName
@@ -543,44 +631,61 @@ function TW.AddEventsToTooltip(tooltip, now)
   EnsureCalendarOpened()
   if C_Calendar and C_Calendar.GetNumDayEvents then
     local today = GetCurrentCalendarDay()
-    if today then
-      local numDays = GetCurrentMonthNumDays()
-      local startDay = today
-      local endDay = today + 7
-      if startDay < 1 then startDay = 1 end
-      if endDay > numDays then endDay = numDays end
+    local stamp = GetCurrentCalendarStamp()
 
-      local seen = {}
-      for day = startDay, endDay do
-        local okNum, n = pcall(C_Calendar.GetNumDayEvents, 0, day)
-        n = okNum and tonumber(n) or 0
-        for i = 1, n do
-          local title = GetCalendarEventText(0, day, i) or ""
-          local holidayText = GetCalendarHolidayText(0, day, i) or ""
-          local hay = string.lower(title .. "\n" .. holidayText)
+    if stamp and _tooltipEventCache.stamp ~= stamp then
+      _tooltipEventCache.stamp = stamp
+      _tooltipEventCache.lines = nil
+    end
 
-          local isRelevant = false
-          if string.find(hay, "turbulent timeways", 1, true) or string.find(hay, "timewalking", 1, true) then
-            isRelevant = true
-          elseif string.len(holidayText) > 0 then
-            isRelevant = true
-          end
+    if not _tooltipEventCache.lines then
+      local cachedLines = {}
+      if today then
+        local startDay = today
+        local endDay = today
+        if startDay < 1 then startDay = 1 end
+        if endDay < 1 then endDay = 1 end
 
-          if isRelevant then
-            local line = title
-            if string.len(line) == 0 and string.len(holidayText) > 0 then
-              line = string.match(holidayText, "^([^\n]+)") or ""
-            end
-            line = SafeToString(line)
-            line = string.gsub(line, "^%s+", "")
-            line = string.gsub(line, "%s+$", "")
-            if string.len(line) > 0 and not seen[line] then
-              seen[line] = true
-              lines[#lines + 1] = line
+        local seen = {}
+        for day = startDay, endDay do
+          local okNum, n = pcall(C_Calendar.GetNumDayEvents, 0, day)
+          n = okNum and tonumber(n) or 0
+          for i = 1, n do
+            local okEvent, ev = pcall(C_Calendar.GetDayEvent, 0, day, i)
+            if okEvent and type(ev) == "table" and IsDayEventActiveNow(ev, now) then
+              local title = GetCalendarEventText(0, day, i) or ""
+              local holidayText = GetCalendarHolidayText(0, day, i) or ""
+              local hay = string.lower(title .. "\n" .. holidayText)
+
+              local isRelevant = false
+              if string.find(hay, "turbulent timeways", 1, true) or string.find(hay, "timewalking", 1, true) then
+                isRelevant = true
+              elseif string.len(holidayText) > 0 then
+                isRelevant = true
+              end
+
+              if isRelevant then
+                local line = title
+                if string.len(line) == 0 and string.len(holidayText) > 0 then
+                  line = string.match(holidayText, "^([^\n]+)") or ""
+                end
+                line = SafeToString(line)
+                line = string.gsub(line, "^%s+", "")
+                line = string.gsub(line, "%s+$", "")
+                if string.len(line) > 0 and not seen[line] then
+                  seen[line] = true
+                  cachedLines[#cachedLines + 1] = line
+                end
+              end
             end
           end
         end
       end
+      _tooltipEventCache.lines = cachedLines
+    end
+
+    for _, line in ipairs(_tooltipEventCache.lines or {}) do
+      lines[#lines + 1] = line
     end
   end
 
