@@ -204,11 +204,24 @@ local optionsFrame
 
 local ResetDefaults
 local ApplyState
+local UpdateAhuneButton
+local DEBUG_AHUNE_BUTTON = false
+
+local function DebugAhune(msg)
+  if DEBUG_AHUNE_BUTTON then
+    Print("[Ahune] " .. tostring(msg or ""))
+  end
+end
 
 -- Love is in the Air (Valentine's) quick-queue button
 local LOVE_IS_IN_THE_AIR_DUNGEON_ID = 288
 local LOVE_IS_IN_THE_AIR_ICON_FILE_ID = 135450 -- inv_valentinesboxofchocolates02
 local HEART_SHAPED_BOX_ITEM_ID = 54537
+
+-- Midsummer Fire Festival quick-queue button
+local AHUNE_DUNGEON_ID = 286
+local AHUNE_ICON_FILE_ID = 135213
+local AHUNE_REWARD_ITEM_ID = 117394 -- Satchel of Chilled Goods
 
 local function GetSecondsUntilDailyReset()
   if C_DateAndTime and type(C_DateAndTime.GetSecondsUntilDailyReset) == "function" then
@@ -311,7 +324,8 @@ local function IsInGroupInstance()
   return instanceType == "party" or instanceType == "raid" or instanceType == "scenario"
 end
 
-local function IsLoveIsInTheAirActiveToday()
+local function IsHolidayActiveToday(holidayNeedle)
+  holidayNeedle = tostring(holidayNeedle or ""):lower()
   if DB and DB.valentineDisableInInstances and IsInGroupInstance() then
     return nil
   end
@@ -321,8 +335,12 @@ local function IsLoveIsInTheAirActiveToday()
 
   -- Cache per-day to avoid hammering the calendar API.
   local stamp = GetTodayStamp()
-  if clockFrame and stamp and clockFrame._valentineStamp == stamp and clockFrame._valentineActive ~= nil then
-    return clockFrame._valentineActive
+  if clockFrame and stamp then
+    clockFrame._holidayCache = clockFrame._holidayCache or {}
+    local cached = clockFrame._holidayCache[holidayNeedle]
+    if cached and cached.stamp == stamp and cached.active ~= nil then
+      return cached.active
+    end
   end
 
   -- Calendar APIs can appear available but return empty data until Blizzard_Calendar
@@ -347,8 +365,8 @@ local function IsLoveIsInTheAirActiveToday()
   end
   if not today then
     if clockFrame then
-      clockFrame._valentineStamp = stamp
-      clockFrame._valentineActive = nil
+      clockFrame._holidayCache = clockFrame._holidayCache or {}
+      clockFrame._holidayCache[holidayNeedle] = { stamp = stamp, active = nil }
     end
     return nil
   end
@@ -357,8 +375,8 @@ local function IsLoveIsInTheAirActiveToday()
   n = okNum and tonumber(n) or 0
   if not okNum or not n or n <= 0 then
     if clockFrame then
-      clockFrame._valentineStamp = stamp
-      clockFrame._valentineActive = nil
+      clockFrame._holidayCache = clockFrame._holidayCache or {}
+      clockFrame._holidayCache[holidayNeedle] = { stamp = stamp, active = nil }
     end
     return nil
   end
@@ -410,7 +428,7 @@ local function IsLoveIsInTheAirActiveToday()
           if type(name) == "string" or type(desc) == "string" then
             sawHolidayInfo = true
             local hay = string.lower(tostring(name or "") .. "\n" .. tostring(desc or ""))
-            if string.find(hay, "love is in the air", 1, true) then
+            if holidayNeedle ~= "" and string.find(hay, holidayNeedle, 1, true) then
               active = true
               break
             end
@@ -424,17 +442,25 @@ local function IsLoveIsInTheAirActiveToday()
   -- calendar result as not-yet-populated so callers can use LFG joinable as a proxy.
   if not sawHolidayEvent or not sawHolidayInfo then
     if clockFrame then
-      clockFrame._valentineStamp = stamp
-      clockFrame._valentineActive = nil
+      clockFrame._holidayCache = clockFrame._holidayCache or {}
+      clockFrame._holidayCache[holidayNeedle] = { stamp = stamp, active = nil }
     end
     return nil
   end
 
   if clockFrame then
-    clockFrame._valentineStamp = stamp
-    clockFrame._valentineActive = active
+    clockFrame._holidayCache = clockFrame._holidayCache or {}
+    clockFrame._holidayCache[holidayNeedle] = { stamp = stamp, active = active }
   end
   return active
+end
+
+local function IsLoveIsInTheAirActiveToday()
+  return IsHolidayActiveToday("love is in the air")
+end
+
+local function IsMidsummerFireFestivalActiveToday()
+  return IsHolidayActiveToday("midsummer fire festival")
 end
 
 local function IsHolidayDungeonJoinable(dungeonID)
@@ -449,7 +475,7 @@ local function IsHolidayDungeonJoinable(dungeonID)
   return joinable and true or false
 end
 
-local function IsHolidayRewardAvailable(dungeonID)
+local function IsHolidayRewardAvailable(dungeonID, targetItemID, targetNameNeedle)
   dungeonID = tonumber(dungeonID)
   if not dungeonID then return false, false end
 
@@ -485,14 +511,16 @@ local function IsHolidayRewardAvailable(dungeonID)
   end
 
   -- Confirm the reward list includes the Heart-Shaped Box (best-effort).
-  local hasBox = nil
+  local hasTarget = nil
   local getNumRewards = _G and rawget(_G, "GetLFGDungeonNumRewards")
   local getRewardInfo = _G and rawget(_G, "GetLFGDungeonRewardInfo")
   if type(getNumRewards) == "function" and type(getRewardInfo) == "function" then
     local okNum, n = pcall(getNumRewards, dungeonID)
     n = okNum and tonumber(n) or 0
     if n and n > 0 then
-      hasBox = false
+      if targetItemID or targetNameNeedle then
+        hasTarget = false
+      end
       for i = 1, n do
         local ok2, name, _, _, _, _, rewardType, rewardID, rewardLink, _, itemID = pcall(getRewardInfo, dungeonID, i)
         if ok2 then
@@ -503,12 +531,17 @@ local function IsHolidayRewardAvailable(dungeonID)
             nm = ""
           end
           local nmLower = string.lower(nm)
-          if id == HEART_SHAPED_BOX_ITEM_ID
-            or link:find("item:" .. tostring(HEART_SHAPED_BOX_ITEM_ID), 1, true)
-            or (rewardType == "item" and string.find(nmLower, "heart%-shaped box"))
-            or string.find(nmLower, "heart%-shaped box")
-          then
-            hasBox = true
+          local matched = false
+          if targetItemID and (id == targetItemID or link:find("item:" .. tostring(targetItemID), 1, true)) then
+            matched = true
+          end
+          if not matched and type(targetNameNeedle) == "string" and targetNameNeedle ~= "" then
+            if (rewardType == "item" and string.find(nmLower, targetNameNeedle, 1, true)) or string.find(nmLower, targetNameNeedle, 1, true) then
+              matched = true
+            end
+          end
+          if matched then
+            hasTarget = true
             break
           end
         end
@@ -516,13 +549,13 @@ local function IsHolidayRewardAvailable(dungeonID)
     end
   end
 
-  if hasBox == false then
+  if hasTarget == false then
     return false, false
   end
 
   -- If we couldn't determine done state but can see the reward, treat it as available.
   if done == nil then
-    if hasBox == true then
+    if hasTarget == true or (not targetItemID and not targetNameNeedle) then
       return true, false
     end
     -- Neither done-state nor reward list is available yet.
@@ -532,32 +565,47 @@ local function IsHolidayRewardAvailable(dungeonID)
   return done == false, false
 end
 
-local function PositionValentineButton(f)
-  if not (f and f.valentineButton and f.valentineButton.ClearAllPoints) then return end
-  local b = f.valentineButton
+local function PositionHolidayButton(f, b, side)
+  if not (f and b and b.ClearAllPoints) then return end
   b:ClearAllPoints()
 
-  local want = DB and tostring(DB.valentineSide or "AUTO"):upper() or "AUTO"
-  local side = (want == "LEFT" or want == "RIGHT") and want or "RIGHT"
-  if want == "AUTO" then
+  local want = tostring(side or "RIGHT"):upper()
+  local sideToUse = want
+  if want == "AUTO" or want == "OPPOSITE" then
+    local desired = DB and tostring(DB.valentineSide or "AUTO"):upper() or "AUTO"
+    sideToUse = (desired == "LEFT" or desired == "RIGHT") and desired or "RIGHT"
     if f.GetCenter and UIParent and UIParent.GetWidth then
       local cx = f:GetCenter()
       local w = UIParent:GetWidth()
       if type(cx) == "number" and type(w) == "number" and w > 0 then
         if cx > (w / 2) then
-          side = "LEFT"
+          sideToUse = "LEFT"
         else
-          side = "RIGHT"
+          sideToUse = "RIGHT"
         end
       end
     end
+    if want == "OPPOSITE" then
+      sideToUse = (sideToUse == "LEFT") and "RIGHT" or "LEFT"
+    end
   end
 
-  if side == "LEFT" then
+  if sideToUse == "LEFT" then
     b:SetPoint("RIGHT", f, "LEFT", -6, 0)
   else
     b:SetPoint("LEFT", f, "RIGHT", 6, 0)
   end
+end
+
+local function PositionValentineButton(f)
+  if not f then return end
+  PositionHolidayButton(f, f.valentineButton, DB and DB.valentineSide or "AUTO")
+  PositionHolidayButton(f, f.ahuneButton, DB and DB.valentineSide or "AUTO")
+end
+
+local function PositionAhuneButton(f)
+  if not f then return end
+  PositionHolidayButton(f, f.ahuneButton, DB and DB.valentineSide or "AUTO")
 end
 
 local function UpdateValentineButton(now, force)
@@ -604,7 +652,7 @@ local function UpdateValentineButton(now, force)
     return
   end
 
-  local okReward, uncertain = IsHolidayRewardAvailable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+  local okReward, uncertain = IsHolidayRewardAvailable(LOVE_IS_IN_THE_AIR_DUNGEON_ID, HEART_SHAPED_BOX_ITEM_ID, "heart shaped box")
   if okReward then
     clockFrame.valentineButton:Show()
   else
@@ -619,6 +667,80 @@ local function UpdateValentineButton(now, force)
         end)
         C_Timer.After(8.0, function()
           UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        end)
+      end
+    end
+  end
+
+  if UpdateAhuneButton then
+    UpdateAhuneButton(now, force)
+  end
+end
+
+UpdateAhuneButton = function(now, force)
+  if not clockFrame or not clockFrame.ahuneButton then return end
+  DebugAhune("update start force=" .. tostring(force) .. " now=" .. tostring(now))
+
+  if InCombatLockdown and InCombatLockdown() then
+    DebugAhune("hide: combat")
+    clockFrame.ahuneButton:Hide()
+    return
+  end
+
+  if DB and DB.valentineDisableInInstances and IsInGroupInstance() then
+    DebugAhune("hide: group instance")
+    clockFrame.ahuneButton:Hide()
+    return
+  end
+
+  now = tonumber(now) or (type(time) == "function" and time() or 0)
+  if not force and clockFrame._ahuneNextCheck and now < clockFrame._ahuneNextCheck then
+    DebugAhune("skip: throttled")
+    return
+  end
+  clockFrame._ahuneNextCheck = now + 15
+
+  PositionAhuneButton(clockFrame)
+
+  if not (DB and DB.enabled) then
+    DebugAhune("hide: addon disabled")
+    clockFrame.ahuneButton:Hide()
+    return
+  end
+
+  local active = IsMidsummerFireFestivalActiveToday()
+  if active == nil then
+    active = IsHolidayDungeonJoinable(AHUNE_DUNGEON_ID)
+  end
+  if not active then
+    DebugAhune("hide: holiday inactive")
+    clockFrame.ahuneButton:Hide()
+    return
+  end
+
+  local joinable = IsHolidayDungeonJoinable(AHUNE_DUNGEON_ID)
+  if joinable == false then
+    DebugAhune("hide: dungeon not joinable")
+    clockFrame.ahuneButton:Hide()
+    return
+  end
+
+  local okReward, uncertain = IsHolidayRewardAvailable(AHUNE_DUNGEON_ID, AHUNE_REWARD_ITEM_ID, "satchel of chilled goods")
+  DebugAhune("state active=" .. tostring(active) .. " joinable=" .. tostring(joinable) .. " reward=" .. tostring(okReward) .. " uncertain=" .. tostring(uncertain))
+  if okReward then
+    DebugAhune("show")
+    clockFrame.ahuneButton:Show()
+  else
+    DebugAhune("hide: reward unavailable")
+    clockFrame.ahuneButton:Hide()
+    if uncertain and C_Timer and C_Timer.After then
+      if not clockFrame._ahuneRetryAt or now >= clockFrame._ahuneRetryAt then
+        clockFrame._ahuneRetryAt = now + 12
+        C_Timer.After(2.0, function()
+          UpdateAhuneButton(type(time) == "function" and time() or 0, true)
+        end)
+        C_Timer.After(8.0, function()
+          UpdateAhuneButton(type(time) == "function" and time() or 0, true)
         end)
       end
     end
@@ -1937,6 +2059,33 @@ local function EnsureClockFrame()
       end
     end
   end)
+
+  -- Holiday quick-queue: Midsummer Fire Festival / Ahune.
+  f.ahuneButton = CreateFrame("Button", nil, f)
+  f.ahuneButton:SetSize(26, 26)
+  f.ahuneButton:Hide()
+  f.ahuneButton.icon = f.ahuneButton:CreateTexture(nil, "ARTWORK")
+  f.ahuneButton.icon:SetAllPoints()
+  f.ahuneButton.icon:SetTexture(AHUNE_ICON_FILE_ID)
+  f.ahuneButton:SetScript("OnClick", function()
+    if InCombatLockdown and InCombatLockdown() then
+      Print("Can't queue while in combat.")
+      return
+    end
+    local ok = TryQueueHolidayDungeon(AHUNE_DUNGEON_ID)
+    if ok then
+      Print("Queued: Midsummer Fire Festival")
+    else
+      Print("Queue attempt blocked; open LFD UI and click Find Group.")
+    end
+    if not ok then
+      local toggle = _G and rawget(_G, "PVEFrame_ToggleFrame")
+      if type(toggle) == "function" then
+        pcall(toggle)
+      end
+    end
+  end)
+  DebugAhune("button created")
 
   f:SetClampedToScreen(true)
 
@@ -4317,12 +4466,16 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     if clockFrame and clockFrame.valentineButton and clockFrame.valentineButton.Hide then
       clockFrame.valentineButton:Hide()
     end
+    if clockFrame and clockFrame.ahuneButton and clockFrame.ahuneButton.Hide then
+      clockFrame.ahuneButton:Hide()
+    end
     return
   end
 
   if event == "PLAYER_REGEN_ENABLED" then
     if DB and DB.enabled then
       UpdateValentineButton(type(time) == "function" and time() or 0, true)
+      UpdateAhuneButton(type(time) == "function" and time() or 0, true)
     end
     return
   end
@@ -4423,9 +4576,11 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
       -- Kick Valentine checks shortly after login as well.
       C_Timer.After(2.0, function()
         UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        UpdateAhuneButton(type(time) == "function" and time() or 0, true)
       end)
       C_Timer.After(8.0, function()
         UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        UpdateAhuneButton(type(time) == "function" and time() or 0, true)
       end)
     end
   end
