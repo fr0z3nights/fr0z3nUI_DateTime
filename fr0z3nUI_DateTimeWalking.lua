@@ -39,6 +39,7 @@ TW.LABELS = TW.LABELS or {
   legion = "Legion",
   bfa = "Battle",
   shadowlands = "Shadows",
+  dragonflight = "Dragon",
 }
 
 -- Stable IDs (from EventQ); Shadowlands intentionally omitted until confirmed.
@@ -52,6 +53,7 @@ TW.LFG_IDS = TW.LFG_IDS or {
   classic = 2634,
   bfa = 2874,
   shadowlands = 3076,
+  dragonflight = 3305,
 }
 
 local SafeToString, SafeLowerString
@@ -290,6 +292,7 @@ local function DetermineActiveKeyFromCalendar()
     legion = { "legion" },
     bfa = { "azeroth", "battle for azeroth", "bfa" },
     shadowlands = { "shadowlands" },
+    dragonflight = { "dragonflight" },
   }
 
   local now = 0
@@ -423,9 +426,7 @@ local function FindTimewalkingRandomDungeonID(prefer)
     return nil
   end
   local preferLower = SafeLowerString(prefer)
-  if preferLower == "" then
-    preferLower = false
-  end
+  local hasPrefer = (preferLower ~= "")
 
   local bestId, bestName
   local fallbackId, fallbackName
@@ -438,7 +439,7 @@ local function FindTimewalkingRandomDungeonID(prefer)
         if not fallbackId then
           fallbackId, fallbackName = dungeonID, name
         end
-        if preferLower then
+        if hasPrefer then
           if string.find(n, preferLower, 1, true) then
             bestId, bestName = dungeonID, name
             break
@@ -495,6 +496,7 @@ local function ResolveTimewalkingDungeonID(key)
     classic = { "classic" },
     bfa = { "azeroth", "bfa" },
     shadowlands = { "shadowlands" },
+    dragonflight = { "dragonflight" },
   }
 
   local scannedID, scannedName = FindTimewalkingRandomDungeonIDByTokens(tokenMap[key] or key)
