@@ -407,7 +407,9 @@ function TW.GetActiveKey(now)
   if (now - (_twCache.checkedAt or 0)) < 60 then
     return _twCache.key
   end
-  local key = DetermineActiveKeyFromCalendar() or DetermineActiveKeyFromLFGList()
+  -- Prefer the joinable LFG queue when it is available; the calendar can lag or match
+  -- the wrong week when multiple Timewalking entries are present.
+  local key = DetermineActiveKeyFromLFGList() or DetermineActiveKeyFromCalendar()
   _twCache.checkedAt = now
   _twCache.key = key
   return key
