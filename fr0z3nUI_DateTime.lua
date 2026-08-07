@@ -638,8 +638,19 @@ local function UpdateValentineButton(now, force)
   -- Only show during the holiday (calendar) AND when the daily reward is still available.
   local active = IsLoveIsInTheAirActiveToday()
   if active == nil then
-    -- Fallback: if we can't read calendar, treat joinable holiday dungeon as a proxy.
-    active = IsHolidayDungeonJoinable(LOVE_IS_IN_THE_AIR_DUNGEON_ID)
+    clockFrame.valentineButton:Hide()
+    if C_Timer and C_Timer.After then
+      if not clockFrame._valentineCalendarRetryAt or now >= clockFrame._valentineCalendarRetryAt then
+        clockFrame._valentineCalendarRetryAt = now + 12
+        C_Timer.After(2.0, function()
+          UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        end)
+        C_Timer.After(8.0, function()
+          UpdateValentineButton(type(time) == "function" and time() or 0, true)
+        end)
+      end
+    end
+    return
   end
   if not active then
     clockFrame.valentineButton:Hide()
@@ -710,7 +721,20 @@ UpdateAhuneButton = function(now, force)
 
   local active = IsMidsummerFireFestivalActiveToday()
   if active == nil then
-    active = IsHolidayDungeonJoinable(AHUNE_DUNGEON_ID)
+    DebugAhune("hide: holiday unknown (calendar not ready)")
+    clockFrame.ahuneButton:Hide()
+    if C_Timer and C_Timer.After then
+      if not clockFrame._ahuneCalendarRetryAt or now >= clockFrame._ahuneCalendarRetryAt then
+        clockFrame._ahuneCalendarRetryAt = now + 12
+        C_Timer.After(2.0, function()
+          UpdateAhuneButton(type(time) == "function" and time() or 0, true)
+        end)
+        C_Timer.After(8.0, function()
+          UpdateAhuneButton(type(time) == "function" and time() or 0, true)
+        end)
+      end
+    end
+    return
   end
   if not active then
     DebugAhune("hide: holiday inactive")
