@@ -205,6 +205,7 @@ local optionsFrame
 local ResetDefaults
 local ApplyState
 local UpdateAhuneButton
+local UpdateBrewfestButton
 local DEBUG_AHUNE_BUTTON = false
 
 local function DebugAhune(msg)
@@ -222,6 +223,10 @@ local HEART_SHAPED_BOX_ITEM_ID = 54537
 local AHUNE_DUNGEON_ID = 286
 local AHUNE_ICON_FILE_ID = 135213
 local AHUNE_REWARD_ITEM_ID = 117394 -- Satchel of Chilled Goods
+
+local BREWFEST_DUNGEON_ID = 287
+local BREWFEST_ICON_FILE_ID = 133201
+local BREWFEST_REWARD_ITEM_ID = 117393 -- Keg-Shaped Treasure Chest
 
 local function GetSecondsUntilDailyReset()
   if C_DateAndTime and type(C_DateAndTime.GetSecondsUntilDailyReset) == "function" then
@@ -463,6 +468,10 @@ local function IsMidsummerFireFestivalActiveToday()
   return IsHolidayActiveToday("midsummer fire festival")
 end
 
+local function IsBrewfestActiveToday()
+  return IsHolidayActiveToday("brewfest")
+end
+
 local function IsHolidayDungeonJoinable(dungeonID)
   local fn = _G and rawget(_G, "IsLFGDungeonJoinable")
   if type(fn) ~= "function" then
@@ -601,6 +610,7 @@ local function PositionValentineButton(f)
   if not f then return end
   PositionHolidayButton(f, f.valentineButton, DB and DB.valentineSide or "AUTO")
   PositionHolidayButton(f, f.ahuneButton, DB and DB.valentineSide or "AUTO")
+  PositionHolidayButton(f, f.brewfestButton, DB and DB.valentineSide or "AUTO")
 end
 
 local function PositionAhuneButton(f)
@@ -686,6 +696,9 @@ local function UpdateValentineButton(now, force)
   if UpdateAhuneButton then
     UpdateAhuneButton(now, force)
   end
+  if UpdateBrewfestButton then
+    UpdateBrewfestButton(now, force)
+  end
 end
 
 UpdateAhuneButton = function(now, force)
@@ -767,6 +780,57 @@ UpdateAhuneButton = function(now, force)
           UpdateAhuneButton(type(time) == "function" and time() or 0, true)
         end)
       end
+    end
+  end
+end
+
+UpdateBrewfestButton = function(now, force)
+  if not clockFrame or not clockFrame.brewfestButton then return end
+  if InCombatLockdown and InCombatLockdown() then
+    clockFrame.brewfestButton:Hide()
+    return
+  end
+  if DB and DB.valentineDisableInInstances and IsInGroupInstance() then
+    clockFrame.brewfestButton:Hide()
+    return
+  end
+
+  now = tonumber(now) or (type(time) == "function" and time() or 0)
+  if not force and clockFrame._brewfestNextCheck and now < clockFrame._brewfestNextCheck then
+    return
+  end
+  clockFrame._brewfestNextCheck = now + 15
+  PositionHolidayButton(clockFrame, clockFrame.brewfestButton, DB and DB.valentineSide or "AUTO")
+
+  if not (DB and DB.enabled) then
+    clockFrame.brewfestButton:Hide()
+    return
+  end
+
+  local active = IsBrewfestActiveToday()
+  if active == nil then
+    clockFrame.brewfestButton:Hide()
+    if C_Timer and C_Timer.After and (not clockFrame._brewfestCalendarRetryAt or now >= clockFrame._brewfestCalendarRetryAt) then
+      clockFrame._brewfestCalendarRetryAt = now + 12
+      C_Timer.After(2.0, function() UpdateBrewfestButton(type(time) == "function" and time() or 0, true) end)
+      C_Timer.After(8.0, function() UpdateBrewfestButton(type(time) == "function" and time() or 0, true) end)
+    end
+    return
+  end
+  if not active or IsHolidayDungeonJoinable(BREWFEST_DUNGEON_ID) == false then
+    clockFrame.brewfestButton:Hide()
+    return
+  end
+
+  local rewardAvailable, uncertain = IsHolidayRewardAvailable(BREWFEST_DUNGEON_ID, BREWFEST_REWARD_ITEM_ID, "keg-shaped treasure chest")
+  if rewardAvailable then
+    clockFrame.brewfestButton:Show()
+  else
+    clockFrame.brewfestButton:Hide()
+    if uncertain and C_Timer and C_Timer.After and (not clockFrame._brewfestRetryAt or now >= clockFrame._brewfestRetryAt) then
+      clockFrame._brewfestRetryAt = now + 12
+      C_Timer.After(2.0, function() UpdateBrewfestButton(type(time) == "function" and time() or 0, true) end)
+      C_Timer.After(8.0, function() UpdateBrewfestButton(type(time) == "function" and time() or 0, true) end)
     end
   end
 end
@@ -2110,6 +2174,29 @@ local function EnsureClockFrame()
     end
   end)
   DebugAhune("button created")
+
+  f.brewfestButton = CreateFrame("Button", nil, f)
+  f.brewfestButton:SetSize(26, 26)
+  f.brewfestButton:Hide()
+  f.brewfestButton.icon = f.brewfestButton:CreateTexture(nil, "ARTWORK")
+  f.brewfestButton.icon:SetAllPoints()
+  f.brewfestButton.icon:SetTexture(BREWFEST_ICON_FILE_ID)
+  f.brewfestButton:SetScript("OnClick", function()
+    if InCombatLockdown and InCombatLockdown() then
+      Print("Can't queue while in combat.")
+      return
+    end
+    local ok = TryQueueHolidayDungeon(BREWFEST_DUNGEON_ID)
+    if ok then
+      Print("Queued: Brewfest")
+    else
+      Print("Queue attempt blocked; open LFD UI and click Find Group.")
+      local toggle = _G and rawget(_G, "PVEFrame_ToggleFrame")
+      if type(toggle) == "function" then
+        pcall(toggle)
+      end
+    end
+  end)
 
   f:SetClampedToScreen(true)
 
@@ -4493,6 +4580,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     if clockFrame and clockFrame.ahuneButton and clockFrame.ahuneButton.Hide then
       clockFrame.ahuneButton:Hide()
     end
+    if clockFrame and clockFrame.brewfestButton and clockFrame.brewfestButton.Hide then
+      clockFrame.brewfestButton:Hide()
+    end
     return
   end
 
@@ -4500,6 +4590,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     if DB and DB.enabled then
       UpdateValentineButton(type(time) == "function" and time() or 0, true)
       UpdateAhuneButton(type(time) == "function" and time() or 0, true)
+      UpdateBrewfestButton(type(time) == "function" and time() or 0, true)
     end
     return
   end
@@ -4601,10 +4692,12 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
       C_Timer.After(2.0, function()
         UpdateValentineButton(type(time) == "function" and time() or 0, true)
         UpdateAhuneButton(type(time) == "function" and time() or 0, true)
+        UpdateBrewfestButton(type(time) == "function" and time() or 0, true)
       end)
       C_Timer.After(8.0, function()
         UpdateValentineButton(type(time) == "function" and time() or 0, true)
         UpdateAhuneButton(type(time) == "function" and time() or 0, true)
+        UpdateBrewfestButton(type(time) == "function" and time() or 0, true)
       end)
     end
   end
