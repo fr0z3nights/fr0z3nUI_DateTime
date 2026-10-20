@@ -31,6 +31,12 @@ Movable date/time display with an options UI and a few convenience commands.
 - `/fdt twlist` — print Timewalking dungeon list (when module is available)
 - `/fdt twid` (or `shadowlands` / `sl`) — prints Shadowlands TW hint
 
+## Holiday quick queue
+
+During Hallow's End, a circular Black Cat icon (236547) beside the clock queues for The Headless Horseman (LFG dungeon 285). The icon is fixed and does not change on world entry. It appears when the holiday is active, the dungeon is not reported unjoinable, and the daily Loot-Filled Pumpkin (209024) reward is available. Completion hides the button until reward availability returns after daily reset.
+
+The button uses the existing holiday-button side and hide-in-instances settings, hides in combat, and retries when calendar/reward data is not ready. Hover for the queue tooltip. If a queue attempt is blocked, a message directs you to the Dungeon Finder.
+
 ## SavedVariables
 - Account: `fr0z3nUI_DateTimeDB`
 - Character: `fr0z3nUI_DateTimeCharDB`

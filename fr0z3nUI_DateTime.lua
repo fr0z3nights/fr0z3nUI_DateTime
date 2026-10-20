@@ -206,6 +206,7 @@ local ResetDefaults
 local ApplyState
 local UpdateAhuneButton
 local UpdateBrewfestButton
+local UpdateHallowsEndButton
 local DEBUG_AHUNE_BUTTON = false
 
 local function DebugAhune(msg)
@@ -227,6 +228,10 @@ local AHUNE_REWARD_ITEM_ID = 117394 -- Satchel of Chilled Goods
 local BREWFEST_DUNGEON_ID = 287
 local BREWFEST_ICON_FILE_ID = 133201
 local BREWFEST_REWARD_ITEM_ID = 117393 -- Keg-Shaped Treasure Chest
+
+local HALLOWS_END_DUNGEON_ID = 285
+local HALLOWS_END_ICON_FILE_ID = 236547
+local HALLOWS_END_REWARD_ITEM_ID = 209024 -- Loot-Filled Pumpkin
 
 local function GetSecondsUntilDailyReset()
   if C_DateAndTime and type(C_DateAndTime.GetSecondsUntilDailyReset) == "function" then
@@ -488,8 +493,8 @@ local function IsHolidayRewardAvailable(dungeonID, targetItemID, targetNameNeedl
   dungeonID = tonumber(dungeonID)
   if not dungeonID then return false, false end
 
-  -- Fallback: if the Heart-Shaped Box was already looted today, hide the button until daily reset.
-  do
+  -- The Heart-Shaped Box fallback applies only to its own holiday dungeon.
+  if dungeonID == LOVE_IS_IN_THE_AIR_DUNGEON_ID then
     local now = type(time) == "function" and time() or 0
     local resetAt = CharDB and tonumber(CharDB.valentineBoxLootedResetAt) or nil
     if resetAt and resetAt > 0 then
@@ -611,6 +616,7 @@ local function PositionValentineButton(f)
   PositionHolidayButton(f, f.valentineButton, DB and DB.valentineSide or "AUTO")
   PositionHolidayButton(f, f.ahuneButton, DB and DB.valentineSide or "AUTO")
   PositionHolidayButton(f, f.brewfestButton, DB and DB.valentineSide or "AUTO")
+  PositionHolidayButton(f, f.hallowsEndButton, DB and DB.valentineSide or "AUTO")
 end
 
 local function PositionAhuneButton(f)
@@ -619,6 +625,9 @@ local function PositionAhuneButton(f)
 end
 
 local function UpdateValentineButton(now, force)
+  if UpdateHallowsEndButton then
+    UpdateHallowsEndButton(now, force)
+  end
   if not clockFrame or not clockFrame.valentineButton then return end
 
   -- Never show or update while in combat (also avoids potential protected UI edge cases).
@@ -832,6 +841,50 @@ UpdateBrewfestButton = function(now, force)
       C_Timer.After(2.0, function() UpdateBrewfestButton(type(time) == "function" and time() or 0, true) end)
       C_Timer.After(8.0, function() UpdateBrewfestButton(type(time) == "function" and time() or 0, true) end)
     end
+  end
+end
+
+UpdateHallowsEndButton = function(now, force)
+  if not clockFrame or not clockFrame.hallowsEndButton then return end
+  local button = clockFrame.hallowsEndButton
+  if not (DB and DB.enabled) or (InCombatLockdown and InCombatLockdown())
+    or (DB.valentineDisableInInstances and IsInGroupInstance()) then
+    button:Hide()
+    return
+  end
+
+  now = tonumber(now) or (type(time) == "function" and time() or 0)
+  if not force and clockFrame._hallowsEndNextCheck and now < clockFrame._hallowsEndNextCheck then
+    return
+  end
+  clockFrame._hallowsEndNextCheck = now + 15
+  PositionHolidayButton(clockFrame, button, DB.valentineSide or "AUTO")
+
+  local function RetryState()
+    if C_Timer and C_Timer.After and (not clockFrame._hallowsEndRetryAt or now >= clockFrame._hallowsEndRetryAt) then
+      clockFrame._hallowsEndRetryAt = now + 12
+      C_Timer.After(2.0, function() UpdateHallowsEndButton(type(time) == "function" and time() or 0, true) end)
+      C_Timer.After(8.0, function() UpdateHallowsEndButton(type(time) == "function" and time() or 0, true) end)
+    end
+  end
+
+  local active = IsHolidayActiveToday("hallow's end")
+  if active == nil then
+    button:Hide()
+    RetryState()
+    return
+  end
+  if not active or IsHolidayDungeonJoinable(HALLOWS_END_DUNGEON_ID) == false then
+    button:Hide()
+    return
+  end
+
+  local available, uncertain = IsHolidayRewardAvailable(HALLOWS_END_DUNGEON_ID, HALLOWS_END_REWARD_ITEM_ID, "loot-filled pumpkin")
+  if available then
+    button:Show()
+  else
+    button:Hide()
+    if uncertain then RetryState() end
   end
 end
 
@@ -2194,6 +2247,41 @@ local function EnsureClockFrame()
       local toggle = _G and rawget(_G, "PVEFrame_ToggleFrame")
       if type(toggle) == "function" then
         pcall(toggle)
+      end
+    end
+  end)
+
+  f.hallowsEndButton = CreateFrame("Button", nil, f)
+  f.hallowsEndButton:SetSize(28.6, 28.6)
+  f.hallowsEndButton:Hide()
+  f.hallowsEndButton.icon = f.hallowsEndButton:CreateTexture(nil, "ARTWORK")
+  f.hallowsEndButton.icon:SetAllPoints()
+  f.hallowsEndButton.icon:SetTexture(HALLOWS_END_ICON_FILE_ID)
+  local iconInset = (1 - 1 / (1.05 * 1.05)) / 2
+  f.hallowsEndButton.icon:SetTexCoord(iconInset, 1 - iconInset, iconInset, 1 - iconInset)
+  f.hallowsEndButton.iconMask = f.hallowsEndButton:CreateMaskTexture()
+  f.hallowsEndButton.iconMask:SetAllPoints(f.hallowsEndButton.icon)
+  f.hallowsEndButton.iconMask:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  f.hallowsEndButton.icon:AddMaskTexture(f.hallowsEndButton.iconMask)
+  f.hallowsEndButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Hallow's End Queue")
+    GameTooltip:Show()
+  end)
+  f.hallowsEndButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  f.hallowsEndButton:SetScript("OnClick", function()
+    if InCombatLockdown and InCombatLockdown() then
+      Print("Can't queue while in combat.")
+      return
+    end
+    if TryQueueHolidayDungeon(HALLOWS_END_DUNGEON_ID) then
+      Print("Queued: The Headless Horseman")
+    else
+      Print("Queue attempt blocked; open LFD UI and click Find Group.")
+      local toggle = _G and rawget(_G, "PVEFrame_ToggleFrame")
+      if type(toggle) == "function" then
+        local ok, err = pcall(toggle)
+        if not ok then Print("Could not open LFD UI: " .. tostring(err)) end
       end
     end
   end)
@@ -4574,6 +4662,9 @@ eventFrame:RegisterEvent("LFG_UPDATE_RANDOM_INFO")
 eventFrame:RegisterEvent("LFG_QUEUE_STATUS_UPDATE")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_REGEN_DISABLED" then
+    if clockFrame and clockFrame.hallowsEndButton then
+      clockFrame.hallowsEndButton:Hide()
+    end
     if clockFrame and clockFrame.valentineButton and clockFrame.valentineButton.Hide then
       clockFrame.valentineButton:Hide()
     end
