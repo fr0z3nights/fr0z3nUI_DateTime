@@ -1,4 +1,4 @@
-## Interface: 120007, 120100
+## Interface: 120007, 120100, 120105
 ## Title: |cff00ccfffr0z3nUI|r DateTime
 ## Notes: Simple movable date/time Type /fdt.
 ## Author: fr0z3n
